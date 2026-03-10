@@ -267,7 +267,9 @@ export class DaoEvolver {
 
     const tool = tools[(cycle - 1) % tools.length];
     const branch = `auto/evo-${new Date().toISOString().replace(/[:.]/g, "-")}-${cycle}`;
-    const worktree = path.join(this.worktreesDir, branch.replace(/\//g, "-"));
+    // Persistent worker slot for LLM cache reuse
+    const worktree = path.join(this.worktreesDir, "dao-1");
+    
     await this._trace(cycle, "PLAN", "已选择工具与目标", {
       tool: tool.name,
       objective,
@@ -374,7 +376,25 @@ export class DaoEvolver {
   }
 
   async _createWorktree(branch: string, p: string): Promise<boolean> {
-    const cp = spawnSync("git", ["worktree", "add", "-b", branch, p, "HEAD"], { cwd: this.root, encoding: "utf-8" });
+    try {
+      // Check if the worktree directory already exists
+      await fs.access(p);
+      
+      // If it exists, sync it to current main immediately
+      // This is much faster than deleting and re-creating
+      spawnSync("git", ["merge", "--abort"], { cwd: p });
+      spawnSync("git", ["reset", "--hard"], { cwd: p });
+      
+      // Checkout the new branch based on the LATEST main
+      const cp = spawnSync("git", ["checkout", "-B", branch, "main"], { cwd: p, encoding: "utf-8" });
+      if (cp.status === 0) return true;
+      
+      // If somehow checkout -B failed (e.g. main not found), fallback to re-add
+      spawnSync("git", ["worktree", "remove", "--force", p], { cwd: this.root });
+    } catch {}
+
+    // Create fresh worktree based on main
+    const cp = spawnSync("git", ["worktree", "add", "-b", branch, p, "main"], { cwd: this.root, encoding: "utf-8" });
     return (cp.status ?? 1) === 0;
   }
 
@@ -576,8 +596,16 @@ export class DaoEvolver {
   }
 
   async _cleanupWorktree(worktree: string, branch: string): Promise<void> {
-    spawnSync("git", ["worktree", "remove", "--force", worktree], { cwd: this.root, encoding: "utf-8" });
-    spawnSync("git", ["branch", "-D", branch], { cwd: this.root, encoding: "utf-8" });
+    try {
+      // Soft cleanup: reset state but KEEP the directory and LLM caches
+      spawnSync("git", ["reset", "--hard", "HEAD"], { cwd: worktree });
+      spawnSync("git", ["clean", "-fd"], { cwd: worktree });
+      // Detach HEAD so the branch is no longer "in use" by this worktree
+      spawnSync("git", ["checkout", "--detach"], { cwd: worktree });
+    } catch {}
+    
+    // Delete the temporary branch in main repo to keep it clean
+    spawnSync("git", ["branch", "-D", branch], { cwd: this.root });
   }
 
   _record(runtime: any, cycle: number, status: string, reason: string, score: number, toolName: string, changedCount: number = 0): void {
