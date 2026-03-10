@@ -5,7 +5,7 @@ import os from "os";
 import chalk from "chalk";
 import { TUI, Text, ProcessTerminal, matchesKey, Key, truncateToWidth, visibleWidth } from "@mariozechner/pi-tui";
 import { readJson, writeJson, appendJsonl, nowIso, ensureDir, backupFile } from "../common/fs.js";
-import { setupLogger, logSummary, logException, checkEvolutionHealth, logHealthCheck, logToolFailure } from "./logging_utils.js";
+import { setupLogger, logSummary, logException, checkEvolutionHealth, logHealthCheck, logToolFailure, ToolFailureAnalysis } from "./logging_utils.js";
 
 type ToolSpec = { name: string; check_cmd: string; run_cmd: string; parser?: string };
 
@@ -674,6 +674,22 @@ export class DaoEvolver {
     const status = ok ? "success" : "fail";
     const failReason = timedOut ? timeoutReason : (rc !== 0 ? `Exit ${rc}` : undefined);
     this.tui.setSubTask(tool.name, status, failReason);
+    
+    // 记录工具失败详情以提升可观测性
+    if (!ok) {
+      let failureMode: ToolFailureAnalysis["failure_mode"] = "unknown";
+      if (timedOut) failureMode = "timeout";
+      else if (rc !== 0) failureMode = "validation_failed";
+      
+      logToolFailure(this.logger, {
+        timestamp: new Date().toISOString(),
+        cycle,
+        tool: tool.name,
+        failure_mode: failureMode,
+        output_preview: lines.slice(-5).join(" ").slice(0, 200),
+        changed_files: []
+      });
+    }
     
     return [ok, lines.join("\n")];
   }
