@@ -49,6 +49,15 @@ export function logSummary(logger: pino.Logger, summary: {
   else logger.info(payload, msg);
 }
 
+export function logException(logger: pino.Logger, err: any, msg: string, context: Record<string, any> = {}) {
+  const payload = { 
+    ...context, 
+    err: err instanceof Error ? { message: err.message, stack: err.stack } : { message: String(err) },
+    timestamp: new Date().toISOString()
+  };
+  logger.error(payload, `${msg}: ${payload.err.message}`);
+}
+
 export function safeLog(logger: pino.Logger, level: string, msg: string, ...args: any[]): boolean {
   try {
     const l = level.toLowerCase();

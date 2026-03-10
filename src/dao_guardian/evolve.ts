@@ -4,8 +4,8 @@ import { spawn, spawnSync } from "child_process";
 import os from "os";
 import readline from "readline";
 import chalk from "chalk";
-import { readJson, writeJson, appendJsonl, nowIso, ensureDir } from "../common/fs.js";
-import { setupLogger, logSummary } from "./logging_utils.js";
+import { readJson, writeJson, appendJsonl, nowIso, ensureDir, backupFile } from "../common/fs.js";
+import { setupLogger, logSummary, logException } from "./logging_utils.js";
 
 type ToolSpec = { name: string; check_cmd: string; run_cmd: string };
 
@@ -170,17 +170,23 @@ export class DaoEvolver {
   }
 
   async _loadConfig(): Promise<EvolutionConfig> {
-    const raw = await readJson<any>(path.join(this.configDir, "evolution.json"));
-    return {
-      objectives: raw.objectives,
-      validate_commands: raw.validate_commands,
-      protected_paths: raw.protected_paths,
-      allowed_edit_roots: raw.allowed_edit_roots,
-      toolchain: raw.toolchain,
-      min_score_promote: Number(raw.min_score_promote),
-      inactivity_timeout_sec: Number(raw.inactivity_timeout_sec ?? 30),
-      total_timeout_sec: Number(raw.total_timeout_sec ?? 300)
-    };
+    const p = path.join(this.configDir, "evolution.json");
+    try {
+      const raw = await readJson<any>(p);
+      return {
+        objectives: raw.objectives || [],
+        validate_commands: raw.validate_commands || [],
+        protected_paths: raw.protected_paths || [],
+        allowed_edit_roots: raw.allowed_edit_roots || [],
+        toolchain: raw.toolchain || [],
+        min_score_promote: Number(raw.min_score_promote ?? 0.8),
+        inactivity_timeout_sec: Number(raw.inactivity_timeout_sec ?? 30),
+        total_timeout_sec: Number(raw.total_timeout_sec ?? 300)
+      };
+    } catch (err) {
+      logException(this.logger, err, `Failed to load config from ${p}`);
+      throw err;
+    }
   }
 
   async bootstrap(): Promise<void> {
@@ -594,7 +600,11 @@ export class DaoEvolver {
     try {
       await fs.access(p);
       return await readJson<any>(p);
-    } catch {
+    } catch (err) {
+      if ((err as any).code !== "ENOENT") {
+        const backup = await backupFile(p);
+        logException(this.logger, err, `Plan file corrupted. Backed up to ${backup}. Resetting to default.`);
+      }
       const plan = this._defaultPlan();
       await writeJson(p, plan);
       return plan;
@@ -602,8 +612,14 @@ export class DaoEvolver {
   }
 
   async _writePlan(plan: any): Promise<void> {
-    plan.updated_at = nowIso();
-    await writeJson(this._planPath(), plan);
+    const p = this._planPath();
+    try {
+      plan.updated_at = nowIso();
+      await writeJson(p, plan);
+    } catch (err) {
+      logException(this.logger, err, `Failed to write plan to ${p}`);
+      throw err;
+    }
   }
 
   async _nextObjective(runtime: any): Promise<[string, any]> {
