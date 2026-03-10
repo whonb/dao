@@ -592,7 +592,7 @@ export class DaoEvolver {
     const processStream = (data: Buffer, stream: "stdout" | "stderr") => {
       lastOutputTime = Date.now();
       const raw = data.toString();
-      
+
       // Always log raw to tracer for full traceability
       this._toolStream(cycle, tool.name, stream, raw.trim());
 
@@ -601,18 +601,20 @@ export class DaoEvolver {
       for (const part of parts) {
         const trimmed = part.trim();
         if (!trimmed) continue;
-        
+
         // Noisy noise filter (line-by-line)
-        if (trimmed.includes("UNDICI-EHPA") || 
+        if (trimmed.includes("UNDICI-EHPA") ||
             trimmed.includes("ExperimentalWarning") ||
             trimmed.includes("load ~/.bash")) {
           continue;
         }
+
+        // Use human-readable formatter for TUI display
+        const formatted = this._formatToolLog(tool.name, tool.parser, stream, trimmed);
+        if (!formatted) continue; // Skip noisy lines
         
-        const parser = this._getParser(tool);
-        let entry = parser(trimmed) ?? `[${stream}] ${trimmed}`;
-        lines.push(entry);
-        this.tui.addLog(entry);
+        lines.push(trimmed); // Keep raw for internal collection
+        this.tui.addLog(formatted);
       }
     };
 
@@ -880,6 +882,149 @@ export class DaoEvolver {
     const payload = { ts: nowIso(), cycle, tool, stream, text };
     appendJsonl(path.join(this.logsDir, "evolution_tool_stream.jsonl"), payload);
     this._emitConsoleLog("tool_stream", payload);
+  }
+
+  /**
+   * Extract human-readable summary from tool stream output
+   * Based on actual stream-json format from qwen/codebuddy/gemini CLI tools
+   * 
+   * Observed formats:
+   * 
+   * qwen/codebuddy (v0.12.0):
+   * - {"type":"system", ...} - system init info
+   * - {"type":"stream_event", "event":{"type":"message_start"| "content_block_delta"|...}} - streaming events
+   * - {"type":"assistant", "message":{"role":"assistant", "content":[...]}} - complete assistant message
+   * - {"type":"result", ...} - final result
+   * 
+   * gemini:
+   * - {"type":"init", ...} - session init
+   * - {"type":"message", "role":"user"|"assistant", "content":"...", "delta":true} - streaming messages
+   * - {"type":"result", "status":"success", ...} - final result
+   */
+  _formatToolLog(toolName: string, toolParser: string | undefined, stream: string, text: string): string {
+    // Skip noisy lines
+    if (text.includes("UNDICI-EHPA") ||
+        text.includes("ExperimentalWarning") ||
+        text.includes("load ~/.bash")) {
+      return "";
+    }
+
+    // Try to parse JSON for structured tools
+    const name = (toolParser || toolName || "").toLowerCase();
+    if (name === "qwen" || name === "codebuddy" || name === "gemini") {
+      try {
+        const obj = JSON.parse(text);
+        const type = obj?.type as string;
+
+        // === GEMINI FORMAT ===
+        if (name === "gemini") {
+          // Skip init messages
+          if (type === "init") return "";
+          
+          // Handle streaming messages
+          if (type === "message") {
+            const role = obj?.role as string;
+            const content = String(obj?.content || "");
+            const isDelta = obj?.delta as boolean;
+            
+            if (role === "assistant" && content) {
+              // For delta messages, show the content snippet
+              if (isDelta) {
+                return chalk.gray(content.slice(0, 80));
+              }
+              return chalk.gray(`[${role}] ${content.slice(0, 100)}...`);
+            }
+            if (role === "user") return ""; // Skip user echo
+          }
+          
+          // Handle result
+          if (type === "result") {
+            const status = obj?.status as string;
+            const duration = obj?.stats?.duration_ms ? `${Math.round(obj.stats.duration_ms)}ms` : "";
+            const tokens = obj?.stats?.total_tokens || 0;
+            return chalk.green.bold(`[Result] ${status}${duration ? ` (${duration}, ${tokens} tokens)` : ""}`);
+          }
+          
+          return "";
+        }
+
+        // === QWEN/CODEBUDDY FORMAT ===
+        // Skip system/init messages - they're too verbose
+        if (type === "system") {
+          return "";
+        }
+
+        // Handle stream_event messages (most common during streaming)
+        if (type === "stream_event") {
+          const event = obj?.event;
+          const eventType = event?.type as string;
+
+          if (eventType === "content_block_delta") {
+            // Extract text delta or thinking delta
+            const delta = event?.delta;
+            const deltaType = delta?.type as string;
+            if (deltaType === "text_delta") {
+              const snippet = String(delta?.text || "").slice(0, 80);
+              if (snippet) return chalk.gray(snippet);
+            } else if (deltaType === "thinking_delta") {
+              // Optionally show thinking (can be disabled)
+              const thinking = String(delta?.thinking || "");
+              if (thinking) return chalk.dim(`[think] ${thinking.slice(0, 60)}...`);
+            }
+            return "";
+          }
+
+          // Skip verbose event notifications
+          if (eventType === "message_start" || 
+              eventType === "content_block_start" || 
+              eventType === "content_block_stop" ||
+              eventType === "message_stop") {
+            return "";
+          }
+        }
+
+        // Handle assistant messages (complete message snapshots)
+        if (type === "assistant") {
+          const message = obj?.message;
+          const role = message?.role as string;
+          const content = message?.content as any[];
+          
+          // Extract text content from content blocks
+          const textBlocks = content?.filter(c => c?.type === "text") || [];
+          for (const block of textBlocks) {
+            const snippet = String(block?.text || "").slice(0, 100);
+            if (snippet) return chalk.gray(`[${role}] ${snippet}...`);
+          }
+          return "";
+        }
+
+        // Handle final result
+        if (type === "result") {
+          const result = String(obj?.result || "");
+          const duration = obj?.duration_ms ? `${Math.round(obj.duration_ms)}ms` : "";
+          return chalk.green.bold(`[Result] ${result.slice(0, 80)}${duration ? ` (${duration})` : ""}`);
+        }
+
+        // Fallback: try to extract any text content
+        const content = this._extractStreamText(obj);
+        if (content && content.trim()) {
+          return chalk.gray(content.split(/\s+/).join(" ").slice(0, 120));
+        }
+
+        // Unknown JSON type - show type for debugging
+        return chalk.dim(`[json:${type}]`);
+
+      } catch {
+        // Not JSON, fall through to plain text
+      }
+    }
+
+    // Plain text fallback - truncate long lines
+    const cleaned = text.split(/\s+/).join(" ").trim();
+    if (cleaned.length > 120) {
+      return chalk.gray(cleaned.slice(0, 120) + "...");
+    }
+    return chalk.gray(cleaned);
   }
 
   _emitConsoleLog(channel: string, payload: Record<string, any>): void {
