@@ -21,21 +21,23 @@
     {
       "name": "gemini",
       "check_cmd": "command -v gemini >/dev/null 2>&1",
-      "run_cmd": "gemini -p \"$(cat {prompt_file})\" -y"
+      "run_cmd": "gemini --output-format stream-json \"$(cat {prompt_file})\" -y",
+      "parser": "gemini"
     },
     {
       "name": "qwen",
       "check_cmd": "command -v qwen >/dev/null 2>&1",
-      "run_cmd": "qwen --max-session-turns 5 --output-format stream-json --include-partial-messages -p \"$(cat {prompt_file})\" -y"
+      "run_cmd": "qwen --max-session-turns 5 --output-format stream-json --include-partial-messages -p \"$(cat {prompt_file})\" -y",
+      "parser": "qwen"
     },
     {
       "name": "codebuddy",
       "check_cmd": "command -v codebuddy >/dev/null 2>&1",
-      "run_cmd": "codebuddy --output-format stream-json --include-partial-messages -p \"$(cat {prompt_file})\" -y"
+      "run_cmd": "codebuddy --output-format stream-json --include-partial-messages -p \"$(cat {prompt_file})\" -y",
+      "parser": "codebuddy"
     }
   ],
   "min_score_promote": 0.7,
   "inactivity_timeout_sec": 30,
-  "total_timeout_sec": 300,
-  "require_clean_main": true
+  "total_timeout_sec": 300
 }

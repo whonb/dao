@@ -7,7 +7,7 @@ import { TUI, Text, ProcessTerminal, matchesKey, Key, truncateToWidth, visibleWi
 import { readJson, writeJson, appendJsonl, nowIso, ensureDir, backupFile } from "../common/fs.js";
 import { setupLogger, logSummary, logException } from "./logging_utils.js";
 
-type ToolSpec = { name: string; check_cmd: string; run_cmd: string };
+type ToolSpec = { name: string; check_cmd: string; run_cmd: string; parser?: string };
 
 type EvolutionConfig = {
   objectives: string[];
@@ -194,6 +194,41 @@ export class DaoEvolver {
     const text = `[IO] ${msg}`;
     this.tui.addLog(chalk.gray(text));
     this._trace(0, "IO", msg, detail);
+  }
+
+  _extractStreamText(obj: any): string | null {
+    if (!obj) return null;
+    if (typeof obj === "string") return obj;
+    const pick = (v: any) => typeof v === "string" ? v : null;
+    return pick(obj.content) ??
+           pick(obj.delta) ??
+           pick(obj.text) ??
+           pick(obj?.delta?.content) ??
+           pick(obj?.message?.content) ??
+           pick(obj?.choices?.[0]?.delta?.content) ??
+           pick(obj?.choices?.[0]?.message?.content) ??
+           pick(obj?.data?.content) ??
+           null;
+  }
+
+  _getParser(tool: ToolSpec): (line: string) => string | null {
+    const name = (tool.parser || "").toLowerCase();
+    const tryJson = (line: string) => {
+      try {
+        const obj = JSON.parse(line);
+        const t = this._extractStreamText(obj);
+        return (t && t.trim()) || null;
+      } catch {
+        return null;
+      }
+    };
+    if (name === "qwen" || name === "codebuddy" || name === "gemini") {
+      return tryJson;
+    }
+    if (tool.run_cmd.includes("stream-json")) {
+      return tryJson;
+    }
+    return (_line: string) => null;
   }
 
   async _loadConfig(): Promise<EvolutionConfig> {
@@ -574,7 +609,8 @@ export class DaoEvolver {
           continue;
         }
         
-        const entry = `[${stream}] ${trimmed}`;
+        const parser = this._getParser(tool);
+        let entry = parser(trimmed) ?? `[${stream}] ${trimmed}`;
         lines.push(entry);
         this.tui.addLog(entry);
       }
