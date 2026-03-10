@@ -18,9 +18,29 @@
   ],
   "toolchain": [
     {
+      "name": "gemini",
+      "check_cmd": "command -v gemini >/dev/null 2>&1",
+      "run_cmd": "gemini -p \"$(cat {prompt_file})\" -y"
+    },
+    {
+      "name": "qwen",
+      "check_cmd": "command -v qwen >/dev/null 2>&1",
+      "run_cmd": "qwen -p \"$(cat {prompt_file})\" -y"
+    },
+    {
+      "name": "codebuddy",
+      "check_cmd": "command -v codebuddy >/dev/null 2>&1",
+      "run_cmd": "codebuddy -p \"$(cat {prompt_file})\" -y"
+    },
+    {
       "name": "selfpatch",
       "check_cmd": "command -v npx >/dev/null 2>&1",
       "run_cmd": "npx tsx ../../src/dao_guardian/self_patch.ts --worktree {worktree}"
+    },
+    {
+      "name": "ts-refactor",
+      "check_cmd": "command -v npx >/dev/null 2>&1",
+      "run_cmd": "npx tsx ../../src/tools/refactor_observability.ts --worktree {worktree}"
     }
   ],
   "min_score_promote": 1.0,
