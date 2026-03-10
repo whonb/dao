@@ -11,6 +11,8 @@ dist/
 .env
 .DS_Store
 
+tmp*
+
 # Logs
 logs/
 
@@ -18,3 +20,5 @@ logs/
 state/
 logs/
 data/
+
+.dao/ref/\n# DAO ref\n.dao/ref/\n.dao/registry-cache.json

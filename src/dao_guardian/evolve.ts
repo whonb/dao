@@ -6,6 +6,7 @@ import chalk from "chalk";
 import { TUI, Text, ProcessTerminal, matchesKey, Key, truncateToWidth, visibleWidth } from "@mariozechner/pi-tui";
 import { readJson, writeJson, appendJsonl, nowIso, ensureDir, backupFile } from "../common/fs.js";
 import { setupLogger, logSummary, logException, checkEvolutionHealth, logHealthCheck, logToolFailure, ToolFailureAnalysis, HealthCheckResult } from "./logging_utils.js";
+import { DaoPlanner, PlanResult } from "./planner.js";
 
 type ToolSpec = { name: string; check_cmd: string; run_cmd: string; parser?: string };
 
@@ -120,7 +121,7 @@ class EvoTUI {
     
     footerLines.push(chalk.blue.bold("进度树 Progress Tree:"));
     const phases = [
-      "START", "ENSURE_HEAD", "CHECK_CLEAN", "CHECK_TOOLS",
+      "START", "PLANNING", "ENSURE_HEAD", "CHECK_CLEAN", "CHECK_TOOLS",
       "CREATE_WORKTREE", "RUN_TOOL", "VALIDATE", "COMMIT", "MERGE", "DONE"
     ];
     let foundCurrent = false;
@@ -168,6 +169,7 @@ export class DaoEvolver {
   agentsExcerpt!: string;
   logger = setupLogger("dao.evolver");
   tui = new EvoTUI();
+  planner: DaoPlanner;
 
   constructor(root: string) {
     this.root = root;
@@ -176,6 +178,7 @@ export class DaoEvolver {
     this.logsDir = path.join(root, "logs");
     this.worktreesDir = path.join(root, ".worktrees");
     this.agentsPath = path.join(root, "AGENTS.md");
+    this.planner = new DaoPlanner(root);
   }
 
   _logIO(msg: string, detail: Record<string, any> = {}): void {
@@ -280,41 +283,19 @@ export class DaoEvolver {
     runtime.cycle = Number(runtime.cycle) + 1;
     const cycle = Number(runtime.cycle);
     const cycleStarted = Date.now();
-    const [objective, plan] = await this._nextObjective(runtime);
 
     const getHealth = () => {
       const healthHistory = (runtime.history || []).map((h: any) => ({ status: h.status, tool: h.tool }));
       return checkEvolutionHealth(healthHistory);
     };
 
-    const updateUI = (phase: string, msg: string) => {
-      this.tui.updateStatus(cycle, objective, phase, msg, getHealth());
+    const updateUI = (phase: string, msg: string, obj: string = "...") => {
+      this.tui.updateStatus(cycle, obj, phase, msg, getHealth());
     };
 
     updateUI("START", "开始新一轮进化");
     await this._setLiveStatus(cycle, "START", "开始新一轮进化");
     await this._trace(cycle, "START", "开始新一轮进化", {});
-
-    updateUI("ENSURE_HEAD", "检查仓库 HEAD");
-    const [headOk, headReason] = await this._ensureGitHead();
-    if (!headOk) {
-      runtime.failed_cycles += 1;
-      this._record(runtime, cycle, "FAIL", headReason, 0.0, "");
-      await writeJson(runtimePath, runtime);
-      updateUI("FAIL", headReason);
-      await this._trace(cycle, "FAIL", headReason, { step: "ENSURE_HEAD" });
-      return false;
-    }
-
-    updateUI("CHECK_CLEAN", "检查主仓库是否干净");
-    const [okClean, cleanReason] = await this._checkMainRepoClean();
-    if (!okClean) {
-      this._record(runtime, cycle, "SKIP", cleanReason, 0.0, "");
-      await writeJson(runtimePath, runtime);
-      updateUI("SKIP", cleanReason);
-      await this._trace(cycle, "SKIP", cleanReason, { step: "CHECK_CLEAN" });
-      return false;
-    }
 
     updateUI("CHECK_TOOLS", "检测可用工具");
     const tools = await this._availableTools();
@@ -325,6 +306,31 @@ export class DaoEvolver {
       await writeJson(runtimePath, runtime);
       updateUI("FAIL", reason);
       await this._trace(cycle, "FAIL", reason, { step: "CHECK_TOOLS" });
+      return false;
+    }
+
+    updateUI("PLANNING", "执行智能规划与反思");
+    const [objective, plan] = await this._nextObjective(runtime, tools);
+    updateUI("PLANNING", "规划完成", objective);
+
+    updateUI("ENSURE_HEAD", "检查仓库 HEAD", objective);
+    const [headOk, headReason] = await this._ensureGitHead();
+    if (!headOk) {
+      runtime.failed_cycles += 1;
+      this._record(runtime, cycle, "FAIL", headReason, 0.0, "");
+      await writeJson(runtimePath, runtime);
+      updateUI("FAIL", headReason, objective);
+      await this._trace(cycle, "FAIL", headReason, { step: "ENSURE_HEAD" });
+      return false;
+    }
+
+    updateUI("CHECK_CLEAN", "检查主仓库是否干净", objective);
+    const [okClean, cleanReason] = await this._checkMainRepoClean();
+    if (!okClean) {
+      this._record(runtime, cycle, "SKIP", cleanReason, 0.0, "");
+      await writeJson(runtimePath, runtime);
+      updateUI("SKIP", cleanReason, objective);
+      await this._trace(cycle, "SKIP", cleanReason, { step: "CHECK_CLEAN" });
       return false;
     }
 
@@ -352,12 +358,12 @@ export class DaoEvolver {
       return false;
     }
     try {
-      updateUI("RUN_TOOL", `调用工具: ${tool.name}`);
+      updateUI("RUN_TOOL", `调用工具: ${tool.name}`, objective);
       const promptFile = await this._buildPromptFile(worktree, cycle, objective);
       const [toolOk, toolOut] = await this._runTool(cycle, tool, worktree, promptFile);
       await this._trace(cycle, "TOOL_RESULT", "工具调用结束", { tool: tool.name, tool_ok: toolOk, tool_output_preview: toolOut.slice(0, 120) });
 
-      updateUI("VALIDATE", "执行验证与护栏检查");
+      updateUI("VALIDATE", "执行验证与护栏检查", objective);
       const changedFiles = await this._changedFiles(worktree);
       if (changedFiles.length > 0) {
         this.tui.addLog(chalk.cyan.bold("Detected Changes:"));
@@ -371,12 +377,12 @@ export class DaoEvolver {
       await this._trace(cycle, "EVAL", "完成评分", { score, changed: changedFiles.length, guard_ok: guardOk, validate_ok: validateOk });
 
       if (toolOk && changedFiles.length && guardOk && validateOk && score >= this.config.min_score_promote) {
-        updateUI("COMMIT", "候选提交");
+        updateUI("COMMIT", "候选提交", objective);
         const [commitOk, commitMsg] = await this._commitCandidate(worktree, cycle, objective, tool.name, score);
         let mergeOk = false;
         let mergeMsg = "未执行 merge";
         if (commitOk) {
-          updateUI("MERGE", "尝试快进合并到 main");
+          updateUI("MERGE", "尝试快进合并到 main", objective);
           const r = await this._mergeBranch(branch);
           mergeOk = r[0];
           mergeMsg = r[1];
@@ -386,20 +392,20 @@ export class DaoEvolver {
           runtime.last_tool = tool.name;
           const reason = `晋升成功: ${mergeMsg}`;
           this._record(runtime, cycle, "PROMOTED", reason, score, tool.name, changedFiles.length);
-          updateUI("DONE", reason);
+          updateUI("DONE", reason, objective);
           await this._trace(cycle, "PROMOTED", reason, { tool: tool.name, score });
         } else {
           runtime.failed_cycles += 1;
           const reason = `提交或合并失败: commit=${commitMsg}; merge=${mergeMsg}`;
           this._record(runtime, cycle, "FAIL", reason, score, tool.name, changedFiles.length);
-          updateUI("FAIL", reason);
+          updateUI("FAIL", reason, objective);
           await this._trace(cycle, "FAIL", reason, { tool: tool.name, score });
         }
       } else {
         runtime.failed_cycles += 1;
         const reason = `未达晋升条件; tool_ok=${toolOk}; changed=${changedFiles.length}; guard_ok=${guardOk}; validate_ok=${validateOk}; guard_reason=${guardReason}`;
         this._record(runtime, cycle, "FAIL", reason, score, tool.name, changedFiles.length);
-        updateUI("FAIL", reason);
+        updateUI("FAIL", reason, objective);
         await this._trace(cycle, "FAIL", reason, { tool: tool.name, score, changed: changedFiles.length });
       }
     } finally {
@@ -871,8 +877,35 @@ export class DaoEvolver {
     }
   }
 
-  async _nextObjective(runtime: any): Promise<[string, any]> {
+  async _nextObjective(runtime: any, tools: ToolSpec[]): Promise<[string, any]> {
     const plan = await this._readPlan();
+    const history = runtime.history || [];
+    const lastEvent = history.length ? history[history.length - 1] : null;
+
+    // 触发规划的条件：1.无活跃目标 2.刚成功晋升 3.连续 3 次失败
+    const consecutiveFails = history.slice(-3).filter((h: any) => h.status === "FAIL").length === 3;
+    const shouldPlan = !plan.active_objective || lastEvent?.status === "PROMOTED" || consecutiveFails;
+
+    if (shouldPlan && tools.length > 0) {
+      this.tui.addLog(chalk.blue.bold("\n[Planner] 正在触发智能反思与规划..."));
+      // 优先选择 qwen 或 gemini 作为规划工具
+      const planTool = tools.find(t => t.name === "qwen" || t.name === "gemini") || tools[0];
+      
+      const res = await this.planner.plan(planTool);
+      if (res) {
+        plan.active_objective = res.next_objective;
+        plan.next_actions = res.next_actions;
+        this.tui.addLog(chalk.green(`[Planner] 新目标: ${res.next_objective}`));
+        if (res.thought) {
+          const thoughtPreview = res.thought.length > 150 ? res.thought.slice(0, 150) + "..." : res.thought;
+          this.tui.addLog(chalk.dim(`[Planner] 思考: ${thoughtPreview}`));
+        }
+        await this._writePlan(plan);
+      } else {
+        this.tui.addLog(chalk.yellow("[Planner] 规划失败，将使用备选方案"));
+      }
+    }
+
     let base = String(plan.active_objective || "").trim();
     if (!base) {
       const objectives = plan.objectives || this.config.objectives;
@@ -881,12 +914,7 @@ export class DaoEvolver {
       plan.active_objective = base;
       await this._writePlan(plan);
     }
-    const tail = (runtime.history || []).slice(-3);
-    if (tail.length && tail.every((i: any) => i.status === "FAIL")) {
-      const reasons = tail.map((i: any) => String(i.reason || "").slice(0, 80)).join(" | ");
-      plan.next_actions = ["先消除最近连续失败的主因，再扩展目标", `最近失败摘要: ${reasons}`];
-      await this._writePlan(plan);
-    }
+    
     const nextActions = (plan.next_actions || []).map((i: any) => String(i).trim()).filter(Boolean);
     const objective = nextActions.length ? `${base}；本轮优先动作：${nextActions[0]}` : base;
     return [objective, plan];
