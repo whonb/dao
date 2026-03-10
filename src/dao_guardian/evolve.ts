@@ -380,11 +380,24 @@ export class DaoEvolver {
 
   async _buildPromptFile(worktree: string, cycle: number, objective: string): Promise<string> {
     const runtime = await readJson<any>(path.join(this.stateDir, "evolution_runtime.json"));
+    
+    // Get list of files in allowed edit roots to help LLM skip exploration
+    let allowedFiles: string[] = [];
+    for (const root of this.config.allowed_edit_roots) {
+      try {
+        const cp = spawnSync("find", [root, "-maxdepth", "2", "-not", "-path", "*/.*"], { cwd: worktree, encoding: "utf-8" });
+        if (cp.status === 0) {
+          allowedFiles = allowedFiles.concat(cp.stdout.split("\n").filter(Boolean));
+        }
+      } catch {}
+    }
+
     const summary = {
       cycle,
       global_objective: this.globalObjective,
       objective,
       history_tail: (runtime.history || []).slice(-5),
+      allowed_files_preview: allowedFiles.slice(0, 50),
       constraints: {
         allowed_edit_roots: this.config.allowed_edit_roots,
         protected_paths: this.config.protected_paths,
@@ -400,6 +413,7 @@ export class DaoEvolver {
       "4) 优先提升稳定性、可观测性、可恢复性。\n\n" +
       "全局进化章程（来自 AGENTS.md，必须遵守）：\n" +
       `${this.agentsExcerpt}\n\n` +
+      `当前允许修改的目录及文件预览：\n${allowedFiles.join("\n")}\n\n` +
       `上下文：\n${JSON.stringify(summary, null, 2)}\n`;
     const tmpDir = path.join(os.tmpdir(), "dao_evo_prompts");
     await ensureDir(tmpDir);
@@ -424,6 +438,10 @@ export class DaoEvolver {
     const env = { ...(process as any).env, LC_ALL: "C", LANG: "C" };
     this.tui.setSubTask(tool.name, "running");
     const proc = spawn("bash", ["-lc", cmd], { cwd: worktree, env });
+    
+    // Close stdin immediately to tell the agent it's in non-interactive mode
+    proc.stdin.end();
+
     const lines: string[] = [];
     let timedOut = false;
     let timeoutReason = "";
@@ -453,23 +471,32 @@ export class DaoEvolver {
       }
     }, 500);
 
+    const filterOutput = (text: string) => {
+      // Filter out noisy experimental warnings from Node/Undici
+      if (text.includes("UNDICI-EHPA") || text.includes("ExperimentalWarning")) return null;
+      if (text.includes("load ~/.bash")) return null;
+      return text.trim();
+    };
+
     proc.stdout.on("data", (d: any) => {
       lastOutputTime = Date.now();
-      const line = String(d).trim();
+      const raw = String(d);
+      const line = filterOutput(raw);
       if (line) {
         lines.push(`[stdout] ${line}`);
         this.tui.addLog(`[stdout] ${line}`);
       }
-      this._toolStream(cycle, tool.name, "stdout", line);
+      this._toolStream(cycle, tool.name, "stdout", raw.trim());
     });
     proc.stderr.on("data", (d: any) => {
       lastOutputTime = Date.now();
-      const line = String(d).trim();
+      const raw = String(d);
+      const line = filterOutput(raw);
       if (line) {
         lines.push(`[stderr] ${line}`);
         this.tui.addLog(`[stderr] ${line}`);
       }
-      this._toolStream(cycle, tool.name, "stderr", line);
+      this._toolStream(cycle, tool.name, "stderr", raw.trim());
     });
     this._toolStream(cycle, tool.name, "cmd", `bash -lc ${cmd}`);
     if (promptText) this._toolStream(cycle, tool.name, "prompt", promptText.split(/\s+/).join(" ").slice(0, 220));
