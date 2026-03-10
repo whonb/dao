@@ -3,7 +3,7 @@ import { promises as fs } from "fs";
 import { spawn, spawnSync } from "child_process";
 import os from "os";
 import chalk from "chalk";
-import { TUI, Text, ProcessTerminal } from "@mariozechner/pi-tui";
+import { TUI, Text, ProcessTerminal, matchesKey, Key } from "@mariozechner/pi-tui";
 import { readJson, writeJson, appendJsonl, nowIso, ensureDir, backupFile } from "../common/fs.js";
 import { setupLogger, logSummary, logException } from "./logging_utils.js";
 
@@ -59,6 +59,14 @@ class EvoTUI {
       this.tui.addChild(this.progressText);
       this.tui.addChild(this.logsText);
       this.tui.start();
+      this.tui.addInputListener((data: string) => {
+        if (matchesKey(data, Key.ctrl("c"))) {
+          try { this.tui?.stop(); } catch {}
+          try { clearInterval(this.heartbeatTimer); } catch {}
+          process.exit(0);
+        }
+        return undefined;
+      });
     }
     this.heartbeatTimer = setInterval(() => this.refreshComponents(), 1000);
   }
