@@ -1,0 +1,29 @@
+{
+  "objectives": [
+    "提升自主进化循环的稳定性与可恢复性",
+    "提升日志可观测性与故障定位速度",
+    "降低每轮进化失败率并提高可晋升比例"
+  ],
+  "validate_commands": [
+    "node ../../node_modules/typescript/bin/tsc -p ../../tsconfig.json"
+  ],
+  "protected_paths": [
+    "dist",
+    "node_modules"
+  ],
+  "allowed_edit_roots": [
+    "src",
+    "config",
+    "README.md"
+  ],
+  "toolchain": [
+    {
+      "name": "selfpatch",
+      "check_cmd": "command -v npx >/dev/null 2>&1",
+      "run_cmd": "npx tsx {worktree}/../src/dao_guardian/self_patch.ts --worktree {worktree}"
+    }
+  ],
+  "min_score_promote": 1.0,
+  "tool_timeout_sec": 30,
+  "require_clean_main": true
+}

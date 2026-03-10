@@ -14,7 +14,7 @@ async function main() {
   try {
     await fs.access(readme);
   } catch {
-    return;
+    await fs.writeFile(readme, "# DAO TS 自主进化循环\n\n", "utf-8");
   }
   const marker = "\n## 自主进化心跳\n";
   const now = new Date().toISOString();

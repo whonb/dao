@@ -1,6 +1,7 @@
 import path from "path";
 import { promises as fs } from "fs";
 import { spawn, spawnSync } from "child_process";
+import os from "os";
 import { parse as parseJsonc } from "jsonc-parser";
 import { readJson, writeJson, appendJsonl, nowIso, ensureDir } from "../common/fs.js";
 import { setupLogger } from "./logging_utils.js";
@@ -15,7 +16,6 @@ type EvolutionConfig = {
   toolchain: ToolSpec[];
   min_score_promote: number;
   tool_timeout_sec: number;
-  require_clean_main: boolean;
 };
 
 export class DaoEvolver {
@@ -48,8 +48,7 @@ export class DaoEvolver {
       allowed_edit_roots: raw.allowed_edit_roots,
       toolchain: raw.toolchain,
       min_score_promote: Number(raw.min_score_promote),
-      tool_timeout_sec: Number(raw.tool_timeout_sec),
-      require_clean_main: Boolean(raw.require_clean_main ?? true)
+      tool_timeout_sec: Number(raw.tool_timeout_sec)
     };
   }
 
@@ -99,7 +98,7 @@ export class DaoEvolver {
     }
     await this._setLiveStatus(cycle, "CHECK_CLEAN", "检查主仓库是否干净");
     const [okClean, cleanReason] = await this._checkMainRepoClean();
-    if (this.config.require_clean_main && !okClean) {
+    if (!okClean) {
       this._record(runtime, cycle, "SKIP", cleanReason, 0.0, "");
       await writeJson(runtimePath, runtime);
       await this._setLiveStatus(cycle, "SKIP", cleanReason);
@@ -255,7 +254,7 @@ export class DaoEvolver {
       "全局进化章程（来自 AGENTS.md，必须遵守）：\n" +
       `${this.agentsExcerpt}\n\n` +
       `上下文：\n${JSON.stringify(summary, null, 2)}\n`;
-    const tmpDir = path.join(process.tmpdir(), "dao_evo_prompts");
+    const tmpDir = path.join(os.tmpdir(), "dao_evo_prompts");
     await ensureDir(tmpDir);
     const file = path.join(tmpDir, `evo_prompt_cycle_${cycle}.txt`);
     await fs.writeFile(file, prompt, "utf-8");

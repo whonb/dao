@@ -5,9 +5,9 @@
   "private": true,
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "start:evolver": "node dist/dao_guardian/cli.js",
-    "start:guardian": "node dist/dao_guardian/cli.js predict",
-    "status": "node dist/dao_guardian/cli.js status"
+    "start:evolver": "tsx src/dao_guardian/cli.ts",
+    "start:guardian": "tsx src/dao_guardian/cli.ts predict",
+    "status": "tsx src/dao_guardian/cli.ts status"
   },
   "dependencies": {
     "chalk": "^5.6.2",
@@ -16,6 +16,7 @@
     "pino": "^10.3.1"
   },
   "devDependencies": {
-    "typescript": "^5.6.3"
+    "typescript": "^5.6.3",
+    "tsx": "^4.7.0"
   }
 }
