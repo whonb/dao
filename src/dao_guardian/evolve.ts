@@ -16,7 +16,8 @@ type EvolutionConfig = {
   allowed_edit_roots: string[];
   toolchain: ToolSpec[];
   min_score_promote: number;
-  tool_timeout_sec: number;
+  inactivity_timeout_sec: number;
+  total_timeout_sec: number;
 };
 
 class EvoTUI {
@@ -121,7 +122,8 @@ export class DaoEvolver {
       allowed_edit_roots: raw.allowed_edit_roots,
       toolchain: raw.toolchain,
       min_score_promote: Number(raw.min_score_promote),
-      tool_timeout_sec: Number(raw.tool_timeout_sec)
+      inactivity_timeout_sec: Number(raw.inactivity_timeout_sec ?? 30),
+      total_timeout_sec: Number(raw.total_timeout_sec ?? 300)
     };
   }
 
@@ -362,17 +364,31 @@ export class DaoEvolver {
     const lines: string[] = [];
     let timedOut = false;
     const started = Date.now();
-    const timeoutMs = this.config.tool_timeout_sec * 1000;
+    const inactivityTimeoutMs = this.config.inactivity_timeout_sec * 1000;
+    const totalTimeoutMs = this.config.total_timeout_sec * 1000;
+    let lastOutputTime = Date.now();
+    const startTime = Date.now();
+
     const timer = setInterval(() => {
-      if (Date.now() - started > timeoutMs) {
+      const now = Date.now();
+      const inactiveElapsed = now - lastOutputTime;
+      const totalElapsed = now - startTime;
+
+      if (inactiveElapsed > inactivityTimeoutMs) {
         timedOut = true;
-        try {
-          proc.kill();
-        } catch {}
+        this.tui.addLog(chalk.red(`[Timeout] Inactivity for ${this.config.inactivity_timeout_sec}s`));
+        try { proc.kill(); } catch {}
+        clearInterval(timer);
+      } else if (totalElapsed > totalTimeoutMs) {
+        timedOut = true;
+        this.tui.addLog(chalk.red(`[Timeout] Total execution time exceeded ${this.config.total_timeout_sec}s`));
+        try { proc.kill(); } catch {}
         clearInterval(timer);
       }
     }, 500);
+
     proc.stdout.on("data", (d: any) => {
+      lastOutputTime = Date.now();
       const line = String(d).trim();
       if (line) {
         lines.push(`[stdout] ${line}`);
@@ -381,6 +397,7 @@ export class DaoEvolver {
       this._toolStream(cycle, tool.name, "stdout", line);
     });
     proc.stderr.on("data", (d: any) => {
+      lastOutputTime = Date.now();
       const line = String(d).trim();
       if (line) {
         lines.push(`[stderr] ${line}`);
@@ -392,7 +409,8 @@ export class DaoEvolver {
     if (promptText) this._toolStream(cycle, tool.name, "prompt", promptText.split(/\s+/).join(" ").slice(0, 220));
     const rc: number = await new Promise(resolve => proc.on("close", (code: any) => resolve(Number(code ?? 1))));
     clearInterval(timer);
-    const ok = rc === 0 && !timedOut;
+    // If we have changes, we might consider it OK even if exit code is non-zero (common with some LLM CLIs)
+    const ok = (rc === 0 || lines.length > 10) && !timedOut;
     return [ok, lines.join("\n")];
   }
 
