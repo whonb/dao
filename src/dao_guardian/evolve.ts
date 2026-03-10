@@ -991,7 +991,7 @@ export class DaoEvolver {
             const content = String(obj?.content || "");
             const isDelta = obj?.delta as boolean;
             if (content) return { text: isDelta ? content : `[${role}] ${content}`, isDelta };
-            return { text: chalk.dim(`[${role}] (empty message)`), isDelta: false };
+            return null; // Silent for empty/envelope messages
           }
 
           if (type === "call") {
@@ -1006,10 +1006,7 @@ export class DaoEvolver {
             const status = obj?.status || "done";
             return { text: chalk.green.bold(`\n[Result] ${status}\n`), isDelta: false };
           }
-          
-          // Show other gemini metadata
-          const keys = Object.keys(obj).filter(k => k !== "type").join(", ");
-          return { text: chalk.dim(`[gemini:${type}] {${keys}}`), isDelta: false };
+          return null;
         }
 
         // === QWEN/CODEBUDDY FORMAT ===
@@ -1019,8 +1016,7 @@ export class DaoEvolver {
           if (subtype === "init") {
             return { text: chalk.blue(`[system] ${name} initialized (model: ${model || "unknown"})`), isDelta: false };
           }
-          const msg = obj?.message || obj?.text || subtype || "system event";
-          return { text: chalk.blue(`[system] ${msg}`), isDelta: false };
+          return null; // Silent for technical system noise
         }
 
         if (type === "stream_event") {
@@ -1030,6 +1026,7 @@ export class DaoEvolver {
             const delta = event?.delta;
             if (delta?.type === "text_delta") return { text: delta.text || "", isDelta: true };
             if (delta?.type === "thinking_delta") return { text: chalk.dim(delta.thinking || ""), isDelta: true };
+            if (delta?.type === "input_json_delta") return { text: chalk.yellow(delta.partial_json || ""), isDelta: true };
             return null;
           }
           if (evType === "tool_call_delta") {
@@ -1038,21 +1035,23 @@ export class DaoEvolver {
             if (call?.arguments) return { text: chalk.yellow(call.arguments), isDelta: true };
             return null;
           }
-          return { text: chalk.dim(`[event] ${evType}`), isDelta: false };
+          // Silent for lifecycle noise
+          if (["message_start", "message_stop", "content_block_start", "content_block_stop"].includes(evType)) return null;
+          return null; 
         }
 
         if (type === "assistant") {
           const content = obj?.message?.content as any[];
           if (content) {
             for (const block of content) {
-              if (block.type === "text") return { text: block.text || "", isDelta: false };
+              if (block.type === "text" && block.text) return { text: block.text, isDelta: false };
               if (block.type === "tool_use") {
-                const target = block.input?.file_path || block.input?.path || "";
+                const target = block.input?.file_path || block.input?.path || block.input?.absolute_path || "";
                 return { text: chalk.yellow.bold(`\n[TOOL] ${block.name}(${target})\n`), isDelta: false };
               }
             }
           }
-          return { text: chalk.dim(`[assistant] (non-text message)`), isDelta: false };
+          return null;
         }
 
         if (type === "result") {
@@ -1061,11 +1060,16 @@ export class DaoEvolver {
           return { text: chalk.green.bold(`\n[Result] ${result}${duration ? ` (${duration})` : ""}\n`), isDelta: false };
         }
 
+        // Handle tool result pass-back (often labeled as user)
+        if (obj?.role === "user" || type === "user") {
+          const content = this._extractStreamText(obj);
+          if (content && content.length < 300) return { text: chalk.dim(`[user] ${content}`), isDelta: false };
+          return null; // Hide giant technical tool results
+        }
+
         const content = this._extractStreamText(obj);
         if (content && content.trim()) return { text: content, isDelta: false };
-
-        const keys = Object.keys(obj).filter(k => k !== "type").join(", ");
-        return { text: chalk.dim(`[${type || "json"}] {${keys}}`), isDelta: false };
+        return null;
 
       } catch {
         // Not JSON
