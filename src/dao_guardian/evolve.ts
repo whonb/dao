@@ -20,7 +20,7 @@ type EvolutionConfig = {
   total_timeout_sec: number;
 };
 
-type SubTask = { name: string; phase: string; status: "pending" | "running" | "success" | "fail"; reason?: string };
+type SubTask = { name: string; phase: string; status: "pending" | "running" | "success" | "fail"; reason?: string; startTime?: number };
 
 class EvoTUI {
   private cycle: number = 0;
@@ -29,13 +29,16 @@ class EvoTUI {
   private message: string = "";
   private subTasks: SubTask[] = [];
   private logs: string[] = [];
-  private readonly maxLogs = 10;
+  private readonly maxLogs = 12;
   private isTTY: boolean;
   private lastRenderTime: number = 0;
   private renderTimer: NodeJS.Timeout | null = null;
+  private heartbeatTimer: NodeJS.Timeout;
 
   constructor() {
     this.isTTY = process.stdout.isTTY;
+    // Periodic refresh to update timers even without output
+    this.heartbeatTimer = setInterval(() => this.requestRender(), 1000);
   }
 
   updateStatus(cycle: number, objective: string, phase: string, message: string) {
@@ -55,15 +58,26 @@ class EvoTUI {
     if (existing) {
       existing.status = status;
       existing.reason = reason;
+      if (status !== "running") delete existing.startTime;
     } else {
-      this.subTasks.push({ name, phase: this.phase, status, reason });
+      this.subTasks.push({ 
+        name, 
+        phase: this.phase, 
+        status, 
+        reason, 
+        startTime: status === "running" ? Date.now() : undefined 
+      });
     }
     this.requestRender();
   }
 
   addLog(text: string) {
-    this.logs.push(text);
-    if (this.logs.length > this.maxLogs) {
+    // Handle multi-line logs and clean them
+    const lines = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+    for (const line of lines) {
+      this.logs.push(line);
+    }
+    while (this.logs.length > this.maxLogs) {
       this.logs.shift();
     }
     this.requestRender();
@@ -94,7 +108,8 @@ class EvoTUI {
     readline.clearScreenDown(process.stdout);
 
     const width = process.stdout.columns || 80;
-    const line = "━".repeat(width);
+    const lineChar = "━";
+    const line = lineChar.repeat(width);
 
     console.log(chalk.cyan.bold("┏" + "━".repeat(width - 2) + "┓"));
     console.log(chalk.cyan.bold("┃") + chalk.white.bold(" DAO Evolution Terminal ".padStart((width + 22) / 2).padEnd(width - 2)) + chalk.cyan.bold("┃"));
@@ -109,10 +124,9 @@ class EvoTUI {
     this.renderTree();
     
     console.log(chalk.gray(line));
-    console.log(chalk.magenta.bold("工具输出 Tool Output:"));
+    console.log(chalk.magenta.bold("实时输出 Live Tool Output:"));
     for (const log of this.logs) {
-      const cleanLog = log.replace(/\r?\n|\r/g, " ");
-      process.stdout.write(chalk.gray("  " + cleanLog.slice(0, width - 4)) + "\n");
+      process.stdout.write(chalk.gray("  " + log.slice(0, width - 4)) + "\n");
     }
   }
 
@@ -134,14 +148,21 @@ class EvoTUI {
         console.log(`${chalk.gray(" ○")} ${chalk.gray(p)}`);
       }
 
-      // 渲染属于该阶段的所有子任务
       const tasksInPhase = this.subTasks.filter(st => st.phase === p);
       for (const st of tasksInPhase) {
         const icon = st.status === "success" ? chalk.green("✓") : 
                      st.status === "fail" ? chalk.red("✗") : 
                      st.status === "running" ? chalk.yellow("⟳") : chalk.gray("○");
-        const reason = st.reason ? chalk.red(` (${st.reason})`) : "";
-        console.log(`   ${icon} ${chalk.gray(st.name)}${reason}`);
+        
+        let meta = "";
+        if (st.status === "running" && st.startTime) {
+          const elapsed = Math.floor((Date.now() - st.startTime) / 1000);
+          meta = chalk.yellow(` (${elapsed}s)`);
+        } else if (st.reason) {
+          meta = chalk.red(` (${st.reason})`);
+        }
+        
+        console.log(`   ${icon} ${chalk.gray(st.name)}${meta}`);
       }
     }
   }
@@ -455,11 +476,17 @@ export class DaoEvolver {
     } catch {
       promptText = "";
     }
-    const env = { ...(process as any).env, LC_ALL: "C", LANG: "C" };
+    const env = { 
+      ...(process as any).env, 
+      LC_ALL: "C", 
+      LANG: "C",
+      FORCE_COLOR: "1",
+      TERM: "xterm-256color"
+    };
     this.tui.setSubTask(tool.name, "running");
     const proc = spawn("bash", ["-lc", cmd], { cwd: worktree, env });
     
-    // Close stdin immediately to tell the agent it's in non-interactive mode
+    // Explicitly end stdin to prevent hanging on interactive prompts
     proc.stdin.end();
 
     const lines: string[] = [];
@@ -491,33 +518,35 @@ export class DaoEvolver {
       }
     }, 500);
 
-    const filterOutput = (text: string) => {
-      // Filter out noisy experimental warnings from Node/Undici
-      if (text.includes("UNDICI-EHPA") || text.includes("ExperimentalWarning")) return null;
-      if (text.includes("load ~/.bash")) return null;
-      return text.trim();
+    const processStream = (data: Buffer, stream: "stdout" | "stderr") => {
+      lastOutputTime = Date.now();
+      const raw = data.toString();
+      
+      // Always log raw to tracer for full traceability
+      this._toolStream(cycle, tool.name, stream, raw.trim());
+
+      // Split into lines and filter for TUI
+      const parts = raw.split(/\r?\n/);
+      for (const part of parts) {
+        const trimmed = part.trim();
+        if (!trimmed) continue;
+        
+        // Noisy noise filter (line-by-line)
+        if (trimmed.includes("UNDICI-EHPA") || 
+            trimmed.includes("ExperimentalWarning") ||
+            trimmed.includes("load ~/.bash")) {
+          continue;
+        }
+        
+        const entry = `[${stream}] ${trimmed}`;
+        lines.push(entry);
+        this.tui.addLog(entry);
+      }
     };
 
-    proc.stdout.on("data", (d: any) => {
-      lastOutputTime = Date.now();
-      const raw = String(d);
-      const line = filterOutput(raw);
-      if (line) {
-        lines.push(`[stdout] ${line}`);
-        this.tui.addLog(`[stdout] ${line}`);
-      }
-      this._toolStream(cycle, tool.name, "stdout", raw.trim());
-    });
-    proc.stderr.on("data", (d: any) => {
-      lastOutputTime = Date.now();
-      const raw = String(d);
-      const line = filterOutput(raw);
-      if (line) {
-        lines.push(`[stderr] ${line}`);
-        this.tui.addLog(`[stderr] ${line}`);
-      }
-      this._toolStream(cycle, tool.name, "stderr", raw.trim());
-    });
+    proc.stdout.on("data", (d: Buffer) => processStream(d, "stdout"));
+    proc.stderr.on("data", (d: Buffer) => processStream(d, "stderr"));
+
     this._toolStream(cycle, tool.name, "cmd", `bash -lc ${cmd}`);
     if (promptText) this._toolStream(cycle, tool.name, "prompt", promptText.split(/\s+/).join(" ").slice(0, 220));
     const rc: number = await new Promise(resolve => proc.on("close", (code: any) => resolve(Number(code ?? 1))));
