@@ -64,13 +64,15 @@ export function logException(logger: pino.Logger, err: any, msg: string, context
   const payload: Record<string, any> = {
     ...context,
     corr_id: getGlobalCorrelationId(),
-    err: err instanceof Error 
-      ? { 
-          message: err.message, 
+    err: err instanceof Error
+      ? {
+          message: err.message,
           stack: err.stack,
           name: err.name,
-          code: (err as any).code
-        } 
+          code: (err as any).code,
+          // Stack trace sampling for faster fault localization
+          stack_frames: err.stack?.split("\n").slice(0, 5).map(line => line.trim())
+        }
       : { message: String(err) },
     timestamp: new Date().toISOString()
   };
