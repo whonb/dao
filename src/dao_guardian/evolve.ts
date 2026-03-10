@@ -29,41 +29,30 @@ class EvoTUI {
   private message: string = "";
   private subTasks: SubTask[] = [];
   private logs: string[] = [];
-  private readonly maxLogs = 12;
   private isTTY: boolean;
   private heartbeatTimer: NodeJS.Timeout;
   private terminal?: ProcessTerminal;
   private tui?: TUI;
-  private header?: Text;
-  private cycleText?: Text;
-  private objectiveText?: Text;
-  private phaseText?: Text;
-  private progressText?: Text;
   private logsText?: Text;
+  private footerText?: Text;
 
   constructor() {
     this.isTTY = process.stdout.isTTY;
     if (this.isTTY) {
       this.terminal = new ProcessTerminal();
       this.tui = new TUI(this.terminal);
-      this.header = new Text(chalk.cyan.bold("DAO Evolution Terminal"));
-      this.cycleText = new Text("");
-      this.objectiveText = new Text("");
-      this.phaseText = new Text("");
-      this.progressText = new Text("");
+      
+      // Layout: Logs (top, scrollable) → Footer (bottom, fixed)
       this.logsText = new Text("");
-      this.tui.addChild(this.header);
-      this.tui.addChild(this.cycleText);
-      this.tui.addChild(this.objectiveText);
-      this.tui.addChild(this.phaseText);
-      this.tui.addChild(this.progressText);
+      this.footerText = new Text("");
+      
+      // Add in display order
       this.tui.addChild(this.logsText);
+      this.tui.addChild(this.footerText);
+      
       this.tui.start();
-      this.header.setText(chalk.cyan.bold("DAO Evolution Terminal"));
-      this.cycleText.setText(`${chalk.yellow("Cycle:")} ${chalk.white(this.cycle)}`);
-      this.objectiveText.setText(`${chalk.yellow("Objective:")} ${chalk.white(this.objective)}`);
-      this.phaseText.setText(`${chalk.yellow("Phase:")} ${chalk.bold.green("INIT")} ${chalk.gray("│")} 加载配置中...`);
-      this.tui.requestRender(true);
+      this.refreshComponents();
+      
       this.tui.addInputListener((data: string) => {
         if (matchesKey(data, Key.ctrl("c"))) {
           try { this.tui?.stop(); } catch {}
@@ -83,7 +72,6 @@ class EvoTUI {
     this.message = message;
     if (phase === "START") {
       this.subTasks = [];
-      this.logs = [];
     }
     this.refreshComponents();
   }
@@ -95,12 +83,12 @@ class EvoTUI {
       existing.reason = reason;
       if (status !== "running") delete existing.startTime;
     } else {
-      this.subTasks.push({ 
-        name, 
-        phase: this.phase, 
-        status, 
-        reason, 
-        startTime: status === "running" ? Date.now() : undefined 
+      this.subTasks.push({
+        name,
+        phase: this.phase,
+        status,
+        reason,
+        startTime: status === "running" ? Date.now() : undefined
       });
     }
     this.refreshComponents();
@@ -112,8 +100,15 @@ class EvoTUI {
     for (const line of lines) {
       this.logs.push(line);
     }
-    while (this.logs.length > this.maxLogs) {
-      this.logs.shift();
+    this.refreshComponents();
+  }
+
+  appendLog(text: string) {
+    if (this.logs.length === 0) {
+      this.logs.push(text.trim());
+    } else {
+      // Append to the last line directly
+      this.logs[this.logs.length - 1] += text;
     }
     this.refreshComponents();
   }
@@ -121,31 +116,60 @@ class EvoTUI {
   private refreshComponents() {
     if (!this.isTTY) return;
     const width = this.terminal?.columns || process.stdout.columns || 80;
-    this.header?.setText(chalk.cyan.bold("DAO Evolution Terminal"));
-    this.cycleText?.setText(truncateToWidth(`${chalk.yellow("Cycle:")} ${chalk.white(this.cycle)}`, width));
-    this.objectiveText?.setText(truncateToWidth(`${chalk.yellow("Objective:")} ${chalk.white(this.objective)}`, width));
-    this.phaseText?.setText(truncateToWidth(`${chalk.yellow("Phase:")} ${chalk.bold.green(this.phase)} ${chalk.gray("│")} ${this.message}`, width));
-    const progressLines: string[] = [];
-    progressLines.push(truncateToWidth(chalk.blue.bold("进度树 Progress Tree:"), width));
+    const height = this.terminal?.rows || process.stdout.rows || 24;
+    
+    // Calculate footer height (reserved space at bottom)
+    const footerReserved = 12; // Reserve ~12 lines for footer
+    const maxLogLines = Math.max(1, height - footerReserved - 2);
+    
+    // Logs (top, scrollable - show latest lines that fit)
+    const logLines: string[] = [];
+    logLines.push(chalk.magenta.bold("━━━ 实时输出 Live Tool Output ━━━"));
+    
+    // Show only the lines that fit in the available space
+    const displayLogs = this.logs.slice(-maxLogLines);
+    for (const log of displayLogs) {
+      logLines.push(chalk.gray("  " + log));
+    }
+    
+    // Pad with empty lines to fill space (optional, for visual consistency)
+    while (logLines.length < maxLogLines + 1) {
+      logLines.push("");
+    }
+    
+    this.logsText?.setText(logLines.join("\n"));
+    
+    // Footer (bottom, fixed) - contains Header + Status + Progress
+    const footerLines: string[] = [];
+    footerLines.push(chalk.cyan.bold("═══ DAO Evolution Terminal ═══"));
+    footerLines.push(chalk.gray("─".repeat(Math.min(50, width))));
+    
+    // Status bar (compact single line)
+    const statusLine = `${chalk.yellow("Cycle:")} ${chalk.white(this.cycle)}  ${chalk.gray("│")}  ${chalk.yellow("Phase:")} ${chalk.bold.green(this.phase)}  ${chalk.gray("│")}  ${chalk.cyan(this.message)}`;
+    footerLines.push(truncateToWidth(statusLine, width));
+    footerLines.push(chalk.gray("─".repeat(Math.min(50, width))));
+    
+    // Progress tree
+    footerLines.push(chalk.blue.bold("进度树 Progress Tree:"));
     const phases = [
-      "START", "ENSURE_HEAD", "CHECK_CLEAN", "CHECK_TOOLS", 
+      "START", "ENSURE_HEAD", "CHECK_CLEAN", "CHECK_TOOLS",
       "CREATE_WORKTREE", "RUN_TOOL", "VALIDATE", "COMMIT", "MERGE", "DONE"
     ];
     let foundCurrent = false;
     for (const p of phases) {
       const isCurrent = p === this.phase;
       if (isCurrent) {
-        progressLines.push(truncateToWidth(`${chalk.green(" ●")} ${chalk.bold.white(p)}`, width));
+        footerLines.push(`${chalk.green(" ●")} ${chalk.bold.white(p)}`);
         foundCurrent = true;
       } else if (!foundCurrent) {
-        progressLines.push(truncateToWidth(`${chalk.green(" ✓")} ${chalk.gray(p)}`, width));
+        footerLines.push(`${chalk.green(" ✓")} ${chalk.gray(p)}`);
       } else {
-        progressLines.push(truncateToWidth(`${chalk.gray(" ○")} ${chalk.gray(p)}`, width));
+        footerLines.push(`${chalk.gray(" ○")} ${chalk.gray(p)}`);
       }
       const tasksInPhase = this.subTasks.filter(st => st.phase === p);
       for (const st of tasksInPhase) {
-        const icon = st.status === "success" ? chalk.green("✓") : 
-                     st.status === "fail" ? chalk.red("✗") : 
+        const icon = st.status === "success" ? chalk.green("✓") :
+                     st.status === "fail" ? chalk.red("✗") :
                      st.status === "running" ? chalk.yellow("⟳") : chalk.gray("○");
         let meta = "";
         if (st.status === "running" && st.startTime) {
@@ -154,16 +178,12 @@ class EvoTUI {
         } else if (st.reason) {
           meta = chalk.red(` (${st.reason})`);
         }
-        progressLines.push(truncateToWidth(`   ${icon} ${chalk.gray(st.name)}${meta}`, width));
+        footerLines.push(`   ${icon} ${chalk.gray(st.name)}${meta}`);
       }
     }
-    this.progressText?.setText(progressLines.join("\n"));
-    const logLines: string[] = [];
-    logLines.push(truncateToWidth(chalk.magenta.bold("实时输出 Live Tool Output:"), width));
-    for (const log of this.logs) {
-      logLines.push(truncateToWidth(chalk.gray("  " + log), width));
-    }
-    this.logsText?.setText(logLines.join("\n"));
+    
+    this.footerText?.setText(footerLines.join("\n"));
+    
     this.tui?.requestRender(true);
   }
 }
@@ -365,6 +385,12 @@ export class DaoEvolver {
 
       updateUI("VALIDATE", "执行验证与护栏检查");
       const changedFiles = await this._changedFiles(worktree);
+      if (changedFiles.length > 0) {
+        this.tui.addLog(chalk.cyan.bold("Detected Changes:"));
+        for (const f of changedFiles) {
+          this.tui.addLog(chalk.cyan(`  - ${f}`));
+        }
+      }
       const [guardOk, guardReason] = this._guardChanges(changedFiles);
       const [validateOk, validateDetail] = await this._validate(worktree);
       const score = this._score(toolOk, changedFiles, guardOk, validateOk);
@@ -422,7 +448,11 @@ export class DaoEvolver {
     this._logCommand("git status --porcelain");
     const cp = spawnSync("git", ["status", "--porcelain"], { cwd: this.root, encoding: "utf-8" });
     if (cp.status !== 0) return [false, cp.stderr?.trim() || "git status 失败"];
-    if (cp.stdout.trim()) return [false, "主仓库存在未提交改动，暂停自动进化"];
+    if (cp.stdout.trim()) {
+      const msg = "主仓库存在未提交改动，将尝试带脏合并 (Dirty Merge Mode)";
+      this.tui.addLog(chalk.yellow(`[WARN] ${msg}`));
+      return [true, msg];
+    }
     return [true, "ok"];
   }
 
@@ -556,16 +586,19 @@ export class DaoEvolver {
       LC_ALL: "C", 
       LANG: "C",
       FORCE_COLOR: "1",
-      TERM: "xterm-256color"
+      TERM: "dumb",
+      CI: "true",
+      NODE_ENV: "test"
     };
     this.tui.setSubTask(tool.name, "running");
     
     this._logCommand(`bash -lc ${cmd}`, { cwd: worktree, tool: tool.name });
-    const proc = spawn("bash", ["-lc", cmd], { cwd: worktree, env });
+    const proc = spawn("bash", ["-lc", cmd], { 
+      cwd: worktree, 
+      env, 
+      stdio: ["ignore", "pipe", "pipe"] 
+    });
     
-    // Explicitly end stdin to prevent hanging on interactive prompts
-    proc.stdin.end();
-
     const lines: string[] = [];
     let timedOut = false;
     let timeoutReason = "";
@@ -602,25 +635,28 @@ export class DaoEvolver {
       // Always log raw to tracer for full traceability
       this._toolStream(cycle, tool.name, stream, raw.trim());
 
-      // Split into lines and filter for TUI
+      // Split into lines
       const parts = raw.split(/\r?\n/);
       for (const part of parts) {
         const trimmed = part.trim();
         if (!trimmed) continue;
 
-        // Noisy noise filter (line-by-line)
-        if (trimmed.includes("UNDICI-EHPA") ||
-            trimmed.includes("ExperimentalWarning") ||
-            trimmed.includes("load ~/.bash")) {
-          continue;
-        }
-
         // Use human-readable formatter for TUI display
         const formatted = this._formatToolLog(tool.name, tool.parser, stream, trimmed);
-        if (!formatted) continue; // Skip noisy lines
         
         lines.push(trimmed); // Keep raw for internal collection
-        this.tui.addLog(formatted);
+        if (formatted) {
+          if (formatted.isDelta) {
+            this.tui.appendLog(formatted.text);
+          } else {
+            this.tui.addLog(formatted.text);
+          }
+        } else {
+          // FALLBACK: If not JSON, show it with stream prefix. 
+          // Use red for stderr, gray for stdout.
+          const prefix = stream === "stderr" ? chalk.red(`[${stream}] `) : chalk.gray(`[${stream}] `);
+          this.tui.addLog(prefix + chalk.dim(trimmed));
+        }
       }
     };
 
@@ -704,7 +740,20 @@ export class DaoEvolver {
 
   async _mergeBranch(branch: string): Promise<[boolean, string]> {
     this._logCommand(`git merge --ff-only ${branch}`);
-    const cp = spawnSync("git", ["merge", "--ff-only", branch], { cwd: this.root, encoding: "utf-8" });
+    let cp = spawnSync("git", ["merge", "--ff-only", branch], { cwd: this.root, encoding: "utf-8" });
+    
+    if (cp.status !== 0) {
+      this.tui.addLog(chalk.yellow("[INFO] 合并受阻，尝试使用 stash 保护现场并重新合并..."));
+      // Push current changes to stash
+      spawnSync("git", ["stash", "push", "-m", `auto-evo-stash-${Date.now()}`], { cwd: this.root });
+      
+      // Retry merge
+      cp = spawnSync("git", ["merge", "--ff-only", branch], { cwd: this.root, encoding: "utf-8" });
+      
+      // Always try to pop back
+      spawnSync("git", ["stash", "pop"], { cwd: this.root });
+    }
+
     const out = `${cp.stdout}\n${cp.stderr}`.trim();
     return [(cp.status ?? 1) === 0, out.slice(0, 300)];
   }
@@ -907,14 +956,7 @@ export class DaoEvolver {
    * - {"type":"message", "role":"user"|"assistant", "content":"...", "delta":true} - streaming messages
    * - {"type":"result", "status":"success", ...} - final result
    */
-  _formatToolLog(toolName: string, toolParser: string | undefined, stream: string, text: string): string {
-    // Skip noisy lines
-    if (text.includes("UNDICI-EHPA") ||
-        text.includes("ExperimentalWarning") ||
-        text.includes("load ~/.bash")) {
-      return "";
-    }
-
+  _formatToolLog(toolName: string, toolParser: string | undefined, stream: string, text: string): { text: string; isDelta: boolean } | null {
     // Try to parse JSON for structured tools
     const name = (toolParser || toolName || "").toLowerCase();
     if (name === "qwen" || name === "codebuddy" || name === "gemini") {
@@ -925,7 +967,7 @@ export class DaoEvolver {
         // === GEMINI FORMAT ===
         if (name === "gemini") {
           // Skip init messages
-          if (type === "init") return "";
+          if (type === "init") return null;
           
           // Handle streaming messages
           if (type === "message") {
@@ -934,31 +976,31 @@ export class DaoEvolver {
             const isDelta = obj?.delta as boolean;
             
             if (role === "assistant" && content) {
-              // For delta messages, show the content snippet
-              if (isDelta) {
-                return chalk.gray(content.slice(0, 80));
-              }
-              return chalk.gray(`[${role}] ${content.slice(0, 100)}...`);
+              return { text: isDelta ? content : `[${role}] ${content}`, isDelta };
             }
-            if (role === "user") return ""; // Skip user echo
+            if (role === "user") return null; // Skip user echo
+          }
+
+          // Handle tool calls
+          if (type === "call") {
+            const call = obj?.call;
+            const callName = call?.function?.name || call?.name;
+            const args = call?.function?.arguments || call?.args || {};
+            const target = args.file_path || args.path || args.dest || "";
+            return { text: chalk.yellow.bold(`\n[CALL] ${callName}(${target})\n`), isDelta: false };
           }
           
           // Handle result
           if (type === "result") {
-            const status = obj?.status as string;
-            const duration = obj?.stats?.duration_ms ? `${Math.round(obj.stats.duration_ms)}ms` : "";
-            const tokens = obj?.stats?.total_tokens || 0;
-            return chalk.green.bold(`[Result] ${status}${duration ? ` (${duration}, ${tokens} tokens)` : ""}`);
+            const status = obj?.status || "done";
+            return { text: chalk.green.bold(`\n[Result] ${status}\n`), isDelta: false };
           }
           
-          return "";
+          return null;
         }
 
         // === QWEN/CODEBUDDY FORMAT ===
-        // Skip system/init messages - they're too verbose
-        if (type === "system") {
-          return "";
-        }
+        if (type === "system") return null;
 
         // Handle stream_event messages (most common during streaming)
         if (type === "stream_event") {
@@ -966,26 +1008,28 @@ export class DaoEvolver {
           const eventType = event?.type as string;
 
           if (eventType === "content_block_delta") {
-            // Extract text delta or thinking delta
             const delta = event?.delta;
             const deltaType = delta?.type as string;
             if (deltaType === "text_delta") {
-              const snippet = String(delta?.text || "").slice(0, 80);
-              if (snippet) return chalk.gray(snippet);
+              return { text: delta.text || "", isDelta: true };
             } else if (deltaType === "thinking_delta") {
-              // Optionally show thinking (can be disabled)
-              const thinking = String(delta?.thinking || "");
-              if (thinking) return chalk.dim(`[think] ${thinking.slice(0, 60)}...`);
+              return { text: chalk.dim(delta.thinking || ""), isDelta: true };
             }
-            return "";
+            return null;
           }
 
-          // Skip verbose event notifications
+          if (eventType === "tool_call_delta") {
+            const call = event?.delta?.tool_call;
+            if (call?.name) return { text: chalk.yellow.bold(`\n[CALL] ${call.name}`), isDelta: false };
+            if (call?.arguments) return { text: chalk.yellow(call.arguments), isDelta: true };
+            return null;
+          }
+
           if (eventType === "message_start" || 
               eventType === "content_block_start" || 
               eventType === "content_block_stop" ||
               eventType === "message_stop") {
-            return "";
+            return null;
           }
         }
 
@@ -994,43 +1038,41 @@ export class DaoEvolver {
           const message = obj?.message;
           const role = message?.role as string;
           const content = message?.content as any[];
-          
-          // Extract text content from content blocks
-          const textBlocks = content?.filter(c => c?.type === "text") || [];
-          for (const block of textBlocks) {
-            const snippet = String(block?.text || "").slice(0, 100);
-            if (snippet) return chalk.gray(`[${role}] ${snippet}...`);
+          if (!content) return null;
+
+          for (const block of content) {
+            if (block.type === "text") {
+              return { text: block.text || "", isDelta: false };
+            }
+            if (block.type === "tool_use") {
+              const target = block.input?.file_path || block.input?.path || "";
+              return { text: chalk.yellow.bold(`\n[TOOL] ${block.name}(${target})\n`), isDelta: false };
+            }
           }
-          return "";
+          return null;
         }
 
         // Handle final result
         if (type === "result") {
-          const result = String(obj?.result || "");
+          const result = String(obj?.result || "ok");
           const duration = obj?.duration_ms ? `${Math.round(obj.duration_ms)}ms` : "";
-          return chalk.green.bold(`[Result] ${result.slice(0, 80)}${duration ? ` (${duration})` : ""}`);
+          return { text: chalk.green.bold(`\n[Result] ${result}${duration ? ` (${duration})` : ""}\n`), isDelta: false };
         }
 
-        // Fallback: try to extract any text content
         const content = this._extractStreamText(obj);
         if (content && content.trim()) {
-          return chalk.gray(content.split(/\s+/).join(" ").slice(0, 120));
+          return { text: content, isDelta: false };
         }
 
-        // Unknown JSON type - show type for debugging
-        return chalk.dim(`[json:${type}]`);
+        return null;
 
       } catch {
         // Not JSON, fall through to plain text
       }
     }
 
-    // Plain text fallback - truncate long lines
     const cleaned = text.split(/\s+/).join(" ").trim();
-    if (cleaned.length > 120) {
-      return chalk.gray(cleaned.slice(0, 120) + "...");
-    }
-    return chalk.gray(cleaned);
+    return cleaned ? { text: cleaned, isDelta: false } : null;
   }
 
   _emitConsoleLog(channel: string, payload: Record<string, any>): void {

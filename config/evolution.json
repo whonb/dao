@@ -21,7 +21,7 @@
     {
       "name": "gemini",
       "check_cmd": "command -v gemini >/dev/null 2>&1",
-      "run_cmd": "gemini --output-format stream-json \"$(cat {prompt_file})\" -y",
+      "run_cmd": "gemini --output-format stream-json -p \"$(cat {prompt_file})\" -y",
       "parser": "gemini"
     },
     {
@@ -38,6 +38,6 @@
     }
   ],
   "min_score_promote": 0.7,
-  "inactivity_timeout_sec": 30,
-  "total_timeout_sec": 300
+  "inactivity_timeout_sec": 300,
+  "total_timeout_sec": 900
 }
