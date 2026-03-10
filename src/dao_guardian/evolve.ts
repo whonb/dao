@@ -2,8 +2,8 @@ import path from "path";
 import { promises as fs } from "fs";
 import { spawn, spawnSync } from "child_process";
 import os from "os";
-import readline from "readline";
 import chalk from "chalk";
+import { TUI, Text, ProcessTerminal } from "@mariozechner/pi-tui";
 import { readJson, writeJson, appendJsonl, nowIso, ensureDir, backupFile } from "../common/fs.js";
 import { setupLogger, logSummary, logException } from "./logging_utils.js";
 
@@ -31,14 +31,36 @@ class EvoTUI {
   private logs: string[] = [];
   private readonly maxLogs = 12;
   private isTTY: boolean;
-  private lastRenderTime: number = 0;
-  private renderTimer: NodeJS.Timeout | null = null;
   private heartbeatTimer: NodeJS.Timeout;
+  private terminal?: ProcessTerminal;
+  private tui?: TUI;
+  private header?: Text;
+  private cycleText?: Text;
+  private objectiveText?: Text;
+  private phaseText?: Text;
+  private progressText?: Text;
+  private logsText?: Text;
 
   constructor() {
     this.isTTY = process.stdout.isTTY;
-    // Periodic refresh to update timers even without output
-    this.heartbeatTimer = setInterval(() => this.requestRender(), 1000);
+    if (this.isTTY) {
+      this.terminal = new ProcessTerminal();
+      this.tui = new TUI(this.terminal);
+      this.header = new Text(chalk.cyan.bold("DAO Evolution Terminal"));
+      this.cycleText = new Text("");
+      this.objectiveText = new Text("");
+      this.phaseText = new Text("");
+      this.progressText = new Text("");
+      this.logsText = new Text("");
+      this.tui.addChild(this.header);
+      this.tui.addChild(this.cycleText);
+      this.tui.addChild(this.objectiveText);
+      this.tui.addChild(this.phaseText);
+      this.tui.addChild(this.progressText);
+      this.tui.addChild(this.logsText);
+      this.tui.start();
+    }
+    this.heartbeatTimer = setInterval(() => this.refreshComponents(), 1000);
   }
 
   updateStatus(cycle: number, objective: string, phase: string, message: string) {
@@ -50,7 +72,7 @@ class EvoTUI {
       this.subTasks = [];
       this.logs = [];
     }
-    this.requestRender();
+    this.refreshComponents();
   }
 
   setSubTask(name: string, status: SubTask["status"], reason?: string) {
@@ -68,7 +90,7 @@ class EvoTUI {
         startTime: status === "running" ? Date.now() : undefined 
       });
     }
-    this.requestRender();
+    this.refreshComponents();
   }
 
   addLog(text: string) {
@@ -80,57 +102,17 @@ class EvoTUI {
     while (this.logs.length > this.maxLogs) {
       this.logs.shift();
     }
-    this.requestRender();
+    this.refreshComponents();
   }
 
-  private requestRender() {
+  private refreshComponents() {
     if (!this.isTTY) return;
-    const now = Date.now();
-    const wait = 100; // Max 10 FPS
-    
-    if (this.renderTimer) return;
-
-    if (now - this.lastRenderTime > wait) {
-      this.render();
-    } else {
-      this.renderTimer = setTimeout(() => {
-        this.renderTimer = null;
-        this.render();
-      }, wait - (now - this.lastRenderTime));
-    }
-  }
-
-  private render() {
-    this.lastRenderTime = Date.now();
-    
-    // Clear screen and move to top
-    readline.cursorTo(process.stdout, 0, 0);
-    readline.clearScreenDown(process.stdout);
-
-    const width = process.stdout.columns || 80;
-    const lineChar = "━";
-    const line = lineChar.repeat(width);
-
-    console.log(chalk.cyan.bold("┏" + "━".repeat(width - 2) + "┓"));
-    console.log(chalk.cyan.bold("┃") + chalk.white.bold(" DAO Evolution Terminal ".padStart((width + 22) / 2).padEnd(width - 2)) + chalk.cyan.bold("┃"));
-    console.log(chalk.cyan.bold("┗" + "━".repeat(width - 2) + "┛"));
-    
-    console.log(`${chalk.yellow("Cycle:")} ${chalk.white(this.cycle)}`);
-    console.log(`${chalk.yellow("Objective:")} ${chalk.white(this.objective)}`);
-    console.log(`${chalk.yellow("Phase:")} ${chalk.bold.green(this.phase)} ${chalk.gray("│")} ${this.message}`);
-    console.log(chalk.gray(line));
-    
-    console.log(chalk.blue.bold("进度树 Progress Tree:"));
-    this.renderTree();
-    
-    console.log(chalk.gray(line));
-    console.log(chalk.magenta.bold("实时输出 Live Tool Output:"));
-    for (const log of this.logs) {
-      process.stdout.write(chalk.gray("  " + log.slice(0, width - 4)) + "\n");
-    }
-  }
-
-  private renderTree() {
+    this.header?.setText(chalk.cyan.bold("DAO Evolution Terminal"));
+    this.cycleText?.setText(`${chalk.yellow("Cycle:")} ${chalk.white(this.cycle)}`);
+    this.objectiveText?.setText(`${chalk.yellow("Objective:")} ${chalk.white(this.objective)}`);
+    this.phaseText?.setText(`${chalk.yellow("Phase:")} ${chalk.bold.green(this.phase)} ${chalk.gray("│")} ${this.message}`);
+    const progressLines: string[] = [];
+    progressLines.push(chalk.blue.bold("进度树 Progress Tree:"));
     const phases = [
       "START", "ENSURE_HEAD", "CHECK_CLEAN", "CHECK_TOOLS", 
       "CREATE_WORKTREE", "RUN_TOOL", "VALIDATE", "COMMIT", "MERGE", "DONE"
@@ -138,22 +120,19 @@ class EvoTUI {
     let foundCurrent = false;
     for (const p of phases) {
       const isCurrent = p === this.phase;
-      
       if (isCurrent) {
-        console.log(`${chalk.green(" ●")} ${chalk.bold.white(p)}`);
+        progressLines.push(`${chalk.green(" ●")} ${chalk.bold.white(p)}`);
         foundCurrent = true;
       } else if (!foundCurrent) {
-        console.log(`${chalk.green(" ✓")} ${chalk.gray(p)}`);
+        progressLines.push(`${chalk.green(" ✓")} ${chalk.gray(p)}`);
       } else {
-        console.log(`${chalk.gray(" ○")} ${chalk.gray(p)}`);
+        progressLines.push(`${chalk.gray(" ○")} ${chalk.gray(p)}`);
       }
-
       const tasksInPhase = this.subTasks.filter(st => st.phase === p);
       for (const st of tasksInPhase) {
         const icon = st.status === "success" ? chalk.green("✓") : 
                      st.status === "fail" ? chalk.red("✗") : 
                      st.status === "running" ? chalk.yellow("⟳") : chalk.gray("○");
-        
         let meta = "";
         if (st.status === "running" && st.startTime) {
           const elapsed = Math.floor((Date.now() - st.startTime) / 1000);
@@ -161,10 +140,16 @@ class EvoTUI {
         } else if (st.reason) {
           meta = chalk.red(` (${st.reason})`);
         }
-        
-        console.log(`   ${icon} ${chalk.gray(st.name)}${meta}`);
+        progressLines.push(`   ${icon} ${chalk.gray(st.name)}${meta}`);
       }
     }
+    this.progressText?.setText(progressLines.join("\n"));
+    const logLines: string[] = [];
+    logLines.push(chalk.magenta.bold("实时输出 Live Tool Output:"));
+    for (const log of this.logs) {
+      logLines.push(chalk.gray("  " + log));
+    }
+    this.logsText?.setText(logLines.join("\n"));
   }
 }
 
