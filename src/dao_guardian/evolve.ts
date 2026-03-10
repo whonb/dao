@@ -20,7 +20,7 @@ type EvolutionConfig = {
   total_timeout_sec: number;
 };
 
-type SubTask = { name: string; status: "pending" | "running" | "success" | "fail"; reason?: string };
+type SubTask = { name: string; phase: string; status: "pending" | "running" | "success" | "fail"; reason?: string };
 
 class EvoTUI {
   private cycle: number = 0;
@@ -31,6 +31,8 @@ class EvoTUI {
   private logs: string[] = [];
   private readonly maxLogs = 10;
   private isTTY: boolean;
+  private lastRenderTime: number = 0;
+  private renderTimer: NodeJS.Timeout | null = null;
 
   constructor() {
     this.isTTY = process.stdout.isTTY;
@@ -41,19 +43,22 @@ class EvoTUI {
     this.objective = objective;
     this.phase = phase;
     this.message = message;
-    if (phase === "START") this.subTasks = [];
-    this.render();
+    if (phase === "START") {
+      this.subTasks = [];
+      this.logs = [];
+    }
+    this.requestRender();
   }
 
   setSubTask(name: string, status: SubTask["status"], reason?: string) {
-    const existing = this.subTasks.find(t => t.name === name);
+    const existing = this.subTasks.find(t => t.name === name && t.phase === this.phase);
     if (existing) {
       existing.status = status;
       existing.reason = reason;
     } else {
-      this.subTasks.push({ name, status, reason });
+      this.subTasks.push({ name, phase: this.phase, status, reason });
     }
-    this.render();
+    this.requestRender();
   }
 
   addLog(text: string) {
@@ -61,16 +66,32 @@ class EvoTUI {
     if (this.logs.length > this.maxLogs) {
       this.logs.shift();
     }
-    this.render();
+    this.requestRender();
   }
 
-  render() {
-    if (!this.isTTY) {
-      return; // Suppress all console output in non-TTY to keep it clean for logs
-    }
+  private requestRender() {
+    if (!this.isTTY) return;
+    const now = Date.now();
+    const wait = 100; // Max 10 FPS
+    
+    if (this.renderTimer) return;
 
-    // Move cursor to top and clear screen below
-    process.stdout.write("\x1b[H\x1b[J");
+    if (now - this.lastRenderTime > wait) {
+      this.render();
+    } else {
+      this.renderTimer = setTimeout(() => {
+        this.renderTimer = null;
+        this.render();
+      }, wait - (now - this.lastRenderTime));
+    }
+  }
+
+  private render() {
+    this.lastRenderTime = Date.now();
+    
+    // Clear screen and move to top
+    readline.cursorTo(process.stdout, 0, 0);
+    readline.clearScreenDown(process.stdout);
 
     const width = process.stdout.columns || 80;
     const line = "━".repeat(width);
@@ -103,21 +124,24 @@ class EvoTUI {
     let foundCurrent = false;
     for (const p of phases) {
       const isCurrent = p === this.phase;
+      
       if (isCurrent) {
         console.log(`${chalk.green(" ●")} ${chalk.bold.white(p)}`);
         foundCurrent = true;
-        // Render subtasks for current phase if any
-        for (const st of this.subTasks) {
-          const icon = st.status === "success" ? chalk.green("✓") : 
-                       st.status === "fail" ? chalk.red("✗") : 
-                       st.status === "running" ? chalk.yellow("⟳") : chalk.gray("○");
-          const reason = st.reason ? chalk.red(` (${st.reason})`) : "";
-          console.log(`   ${icon} ${chalk.gray(st.name)}${reason}`);
-        }
       } else if (!foundCurrent) {
         console.log(`${chalk.green(" ✓")} ${chalk.gray(p)}`);
       } else {
         console.log(`${chalk.gray(" ○")} ${chalk.gray(p)}`);
+      }
+
+      // 渲染属于该阶段的所有子任务
+      const tasksInPhase = this.subTasks.filter(st => st.phase === p);
+      for (const st of tasksInPhase) {
+        const icon = st.status === "success" ? chalk.green("✓") : 
+                     st.status === "fail" ? chalk.red("✗") : 
+                     st.status === "running" ? chalk.yellow("⟳") : chalk.gray("○");
+        const reason = st.reason ? chalk.red(` (${st.reason})`) : "";
+        console.log(`   ${icon} ${chalk.gray(st.name)}${reason}`);
       }
     }
   }
