@@ -2,7 +2,8 @@ import path from "path";
 import { promises as fs } from "fs";
 import { spawn, spawnSync } from "child_process";
 import os from "os";
-import { parse as parseJsonc } from "jsonc-parser";
+import readline from "readline";
+import chalk from "chalk";
 import { readJson, writeJson, appendJsonl, nowIso, ensureDir } from "../common/fs.js";
 import { setupLogger } from "./logging_utils.js";
 
@@ -18,6 +19,77 @@ type EvolutionConfig = {
   tool_timeout_sec: number;
 };
 
+class EvoTUI {
+  private cycle: number = 0;
+  private objective: string = "";
+  private phase: string = "";
+  private message: string = "";
+  private logs: string[] = [];
+  private readonly maxLogs = 10;
+  private isTTY: boolean;
+
+  constructor() {
+    this.isTTY = process.stdout.isTTY;
+  }
+
+  updateStatus(cycle: number, objective: string, phase: string, message: string) {
+    this.cycle = cycle;
+    this.objective = objective;
+    this.phase = phase;
+    this.message = message;
+    this.render();
+  }
+
+  addLog(text: string) {
+    this.logs.push(text);
+    if (this.logs.length > this.maxLogs) {
+      this.logs.shift();
+    }
+    this.render();
+  }
+
+  render() {
+    if (!this.isTTY) {
+      console.log(`[Cycle ${this.cycle}] [${this.phase}] ${this.message}`);
+      return;
+    }
+
+    // Move cursor to top and clear screen below
+    process.stdout.write("\x1b[H\x1b[J");
+
+    console.log(chalk.cyan.bold("=== DAO Evolution Terminal ==="));
+    console.log(`${chalk.yellow("Cycle:")} ${this.cycle}`);
+    console.log(`${chalk.yellow("Objective:")} ${this.objective}`);
+    console.log(`${chalk.yellow("Status:")} ${chalk.green(this.phase)} - ${this.message}`);
+    console.log("");
+    console.log(chalk.blue.bold("--- Progress Tree ---"));
+    this.renderTree();
+    console.log("");
+    console.log(chalk.magenta.bold("--- Tool Output (Last 10 Lines) ---"));
+    for (const log of this.logs) {
+      process.stdout.write(chalk.gray(log.slice(0, process.stdout.columns - 5)) + "\n");
+    }
+  }
+
+  private renderTree() {
+    const phases = [
+      "START", "ENSURE_HEAD", "CHECK_CLEAN", "CHECK_TOOLS", 
+      "CREATE_WORKTREE", "RUN_TOOL", "VALIDATE", "COMMIT", "MERGE", "DONE"
+    ];
+    let foundCurrent = false;
+    for (const p of phases) {
+      if (p === this.phase) {
+        console.log(`${chalk.green(" ●")} ${chalk.bold(p)} <-- Current`);
+        foundCurrent = true;
+      } else if (!foundCurrent) {
+        console.log(`${chalk.green(" ✓")} ${chalk.gray(p)}`);
+      } else {
+        console.log(`${chalk.gray(" ○")} ${chalk.gray(p)}`);
+      }
+    }
+  }
+}
+
 export class DaoEvolver {
   root: string;
   configDir: string;
@@ -29,6 +101,7 @@ export class DaoEvolver {
   globalObjective!: string;
   agentsExcerpt!: string;
   logger = setupLogger("dao.evolver");
+  tui = new EvoTUI();
 
   constructor(root: string) {
     this.root = root;
@@ -85,40 +158,50 @@ export class DaoEvolver {
     runtime.cycle = Number(runtime.cycle) + 1;
     const cycle = Number(runtime.cycle);
     const cycleStarted = Date.now();
+    const [objective, plan] = await this._nextObjective(runtime);
+
+    const updateUI = (phase: string, msg: string) => {
+      this.tui.updateStatus(cycle, objective, phase, msg);
+    };
+
+    updateUI("START", "开始新一轮进化");
     await this._setLiveStatus(cycle, "START", "开始新一轮进化");
     await this._trace(cycle, "START", "开始新一轮进化", {});
-    await this._setLiveStatus(cycle, "ENSURE_HEAD", "检查仓库 HEAD");
+
+    updateUI("ENSURE_HEAD", "检查仓库 HEAD");
     const [headOk, headReason] = await this._ensureGitHead();
     if (!headOk) {
       runtime.failed_cycles += 1;
       this._record(runtime, cycle, "FAIL", headReason, 0.0, "");
       await writeJson(runtimePath, runtime);
-      await this._setLiveStatus(cycle, "FAIL", headReason);
+      updateUI("FAIL", headReason);
       await this._trace(cycle, "FAIL", headReason, { step: "ENSURE_HEAD" });
       return false;
     }
-    await this._setLiveStatus(cycle, "CHECK_CLEAN", "检查主仓库是否干净");
+
+    updateUI("CHECK_CLEAN", "检查主仓库是否干净");
     const [okClean, cleanReason] = await this._checkMainRepoClean();
     if (!okClean) {
       this._record(runtime, cycle, "SKIP", cleanReason, 0.0, "");
       await writeJson(runtimePath, runtime);
-      await this._setLiveStatus(cycle, "SKIP", cleanReason);
+      updateUI("SKIP", cleanReason);
       await this._trace(cycle, "SKIP", cleanReason, { step: "CHECK_CLEAN" });
       return false;
     }
-    await this._setLiveStatus(cycle, "CHECK_TOOLS", "检测可用工具");
+
+    updateUI("CHECK_TOOLS", "检测可用工具");
     const tools = await this._availableTools();
     if (tools.length === 0) {
       const reason = "未检测到可用工具，请配置 config/evolution.json 中的 toolchain";
       runtime.failed_cycles += 1;
       this._record(runtime, cycle, "FAIL", reason, 0.0, "");
       await writeJson(runtimePath, runtime);
-      await this._setLiveStatus(cycle, "FAIL", reason);
+      updateUI("FAIL", reason);
       await this._trace(cycle, "FAIL", reason, { step: "CHECK_TOOLS" });
       return false;
     }
+
     const tool = tools[(cycle - 1) % tools.length];
-    const [objective, plan] = await this._nextObjective(runtime);
     const branch = `auto/evo-${new Date().toISOString().replace(/[:.]/g, "-")}-${cycle}`;
     const worktree = path.join(this.worktreesDir, branch.replace(/\//g, "-"));
     await this._trace(cycle, "PLAN", "已选择工具与目标", {
@@ -128,37 +211,37 @@ export class DaoEvolver {
       active_objective: plan.active_objective,
       next_actions: plan.next_actions || []
     });
-    await this._setLiveStatus(cycle, "CREATE_WORKTREE", "创建隔离工作树");
+
+    updateUI("CREATE_WORKTREE", "创建隔离工作树");
     const created = await this._createWorktree(branch, worktree);
     if (!created) {
       runtime.failed_cycles += 1;
       this._record(runtime, cycle, "FAIL", "创建 worktree 失败", 0.0, tool.name);
       await writeJson(runtimePath, runtime);
-      await this._setLiveStatus(cycle, "FAIL", "创建 worktree 失败");
+      updateUI("FAIL", "创建 worktree 失败");
       await this._trace(cycle, "FAIL", "创建 worktree 失败", { tool: tool.name, branch });
       return false;
     }
     try {
-      await this._setLiveStatus(cycle, "BUILD_PROMPT", "生成本轮提示词");
+      updateUI("RUN_TOOL", `调用工具: ${tool.name}`);
       const promptFile = await this._buildPromptFile(worktree, cycle, objective);
-      await this._setLiveStatus(cycle, "RUN_TOOL", `调用工具: ${tool.name}`);
       const [toolOk, toolOut] = await this._runTool(cycle, tool, worktree, promptFile);
       await this._trace(cycle, "TOOL_RESULT", "工具调用结束", { tool: tool.name, tool_ok: toolOk, tool_output_preview: toolOut.slice(0, 120) });
-      await this._setLiveStatus(cycle, "CHECK_CHANGES", "检查改动");
+
+      updateUI("VALIDATE", "执行验证与护栏检查");
       const changedFiles = await this._changedFiles(worktree);
-      await this._setLiveStatus(cycle, "GUARD", "执行护栏检查");
       const [guardOk, guardReason] = this._guardChanges(changedFiles);
-      await this._setLiveStatus(cycle, "VALIDATE", "执行验证命令");
       const [validateOk, validateDetail] = await this._validate(worktree);
       const score = this._score(toolOk, changedFiles, guardOk, validateOk);
       await this._trace(cycle, "EVAL", "完成评分", { score, changed: changedFiles.length, guard_ok: guardOk, validate_ok: validateOk });
+
       if (toolOk && changedFiles.length && guardOk && validateOk && score >= this.config.min_score_promote) {
-        await this._setLiveStatus(cycle, "COMMIT", "候选提交");
+        updateUI("COMMIT", "候选提交");
         const [commitOk, commitMsg] = await this._commitCandidate(worktree, cycle, objective, tool.name, score);
         let mergeOk = false;
         let mergeMsg = "未执行 merge";
         if (commitOk) {
-          await this._setLiveStatus(cycle, "MERGE", "尝试快进合并到 main");
+          updateUI("MERGE", "尝试快进合并到 main");
           const r = await this._mergeBranch(branch);
           mergeOk = r[0];
           mergeMsg = r[1];
@@ -168,27 +251,25 @@ export class DaoEvolver {
           runtime.last_tool = tool.name;
           const reason = `晋升成功: ${mergeMsg}`;
           this._record(runtime, cycle, "PROMOTED", reason, score, tool.name);
-          await this._setLiveStatus(cycle, "PROMOTED", reason);
+          updateUI("DONE", reason);
           await this._trace(cycle, "PROMOTED", reason, { tool: tool.name, score });
         } else {
           runtime.failed_cycles += 1;
           const reason = `提交或合并失败: commit=${commitMsg}; merge=${mergeMsg}`;
           this._record(runtime, cycle, "FAIL", reason, score, tool.name);
-          await this._setLiveStatus(cycle, "FAIL", reason);
+          updateUI("FAIL", reason);
           await this._trace(cycle, "FAIL", reason, { tool: tool.name, score });
         }
       } else {
         runtime.failed_cycles += 1;
-        const reason = `未达晋升条件; tool_ok=${toolOk}; changed=${changedFiles.length}; guard_ok=${guardOk}; validate_ok=${validateOk}; detail=${validateDetail}; guard_reason=${guardReason}`;
+        const reason = `未达晋升条件; tool_ok=${toolOk}; changed=${changedFiles.length}; guard_ok=${guardOk}; validate_ok=${validateOk}; guard_reason=${guardReason}`;
         this._record(runtime, cycle, "FAIL", reason, score, tool.name);
-        await this._setLiveStatus(cycle, "FAIL", reason);
+        updateUI("FAIL", reason);
         await this._trace(cycle, "FAIL", reason, { tool: tool.name, score, changed: changedFiles.length });
       }
     } finally {
-      await this._setLiveStatus(cycle, "CLEANUP", "清理 worktree 与临时分支");
       await this._cleanupWorktree(worktree, branch);
       const elapsed = Math.round((Date.now() - cycleStarted) / 1000);
-      await this._setLiveStatus(cycle, "IDLE", `本轮结束，耗时 ${elapsed}s`);
       await this._trace(cycle, "END", "本轮结束", { elapsed_sec: elapsed });
       await writeJson(runtimePath, runtime);
     }
@@ -293,12 +374,18 @@ export class DaoEvolver {
     }, 500);
     proc.stdout.on("data", (d: any) => {
       const line = String(d).trim();
-      if (line) lines.push(`[stdout] ${line}`);
+      if (line) {
+        lines.push(`[stdout] ${line}`);
+        this.tui.addLog(`[stdout] ${line}`);
+      }
       this._toolStream(cycle, tool.name, "stdout", line);
     });
     proc.stderr.on("data", (d: any) => {
       const line = String(d).trim();
-      if (line) lines.push(`[stderr] ${line}`);
+      if (line) {
+        lines.push(`[stderr] ${line}`);
+        this.tui.addLog(`[stderr] ${line}`);
+      }
       this._toolStream(cycle, tool.name, "stderr", line);
     });
     this._toolStream(cycle, tool.name, "cmd", `bash -lc ${cmd}`);
