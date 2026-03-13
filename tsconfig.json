@@ -96,6 +96,12 @@
       ],
       "@whonb/devtools/*": [
         "./packages/devtools/*"
+      ],
+      "@whonb/agents-gemini-cli": [
+        "./packages/agents-gemini-cli/src/index.ts"
+      ],
+      "@whonb/agents-gemini-cli/*": [
+        "./packages/agents-gemini-cli/*"
       ]
     }
   },
