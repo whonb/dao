@@ -323,5 +323,43 @@ export async function syncDependencies(): Promise<void> {
     configLog.info("tsconfig.json 更新成功！");
   }
 
+  // 5. 处理 Agent 配置文件软链接 (让多 Agent 共享 AGENTS.md)
+  const agentsMd = path.resolve(process.cwd(), "AGENTS.md");
+  if (fs.existsSync(agentsMd)) {
+    const agentFiles = ["GEMINI.md", "CLAUDE.md", "QWEN.md"];
+    const agentLog = logger.withTag("Agents");
+    for (const agentFile of agentFiles) {
+      const agentPath = path.resolve(process.cwd(), agentFile);
+      try {
+        let shouldCreate = true;
+        if (fs.existsSync(agentPath)) {
+          const stats = fs.lstatSync(agentPath);
+          if (stats.isSymbolicLink()) {
+            const target = fs.readlinkSync(agentPath);
+            if (target === "AGENTS.md") {
+              shouldCreate = false; // 已存在正确的链接
+            } else {
+              fs.unlinkSync(agentPath); // 错误的链接，删除
+            }
+          } else {
+            // 普通文件，备份并删除
+            const backupPath = `${agentPath}.bak`;
+            if (fs.existsSync(backupPath)) fs.rmSync(backupPath, { force: true });
+            fs.renameSync(agentPath, backupPath);
+            agentLog.info(`备份已有文件: ${agentFile} -> ${agentFile}.bak`);
+          }
+        }
+
+        if (shouldCreate) {
+          // 使用相对路径进行链接，提高可移植性
+          fs.symlinkSync("AGENTS.md", agentPath);
+          agentLog.info(`强制同步软链接: ${agentFile} -> AGENTS.md`);
+        }
+      } catch ( _e) {
+        agentLog.warn(`无法为 ${agentFile} 处理软链接: ${_e instanceof Error ? _e.message : String(_e)}`);
+      }
+    }
+  }
+
   log.success(`同步完成！耗时: ${((Date.now() - startTime) / 1000).toFixed(2)}s`);
 }
