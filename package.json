@@ -16,9 +16,9 @@
     "test": "vitest run",
     "check": "tsc --noEmit && eslint . --ext .ts,.tsx",
     "check:all": "npm run check && npm run check --workspaces --if-present",
-    "postinstall": "tsx src/dao_guardian/cli.ts sync",
-    "start:evolver": "tsx src/dao_guardian/cli.ts",
-    "sync": "tsx src/dao_guardian/cli.ts sync",
+    "postinstall": "tsx src/dao/cli.ts sync",
+    "start:evolver": "tsx src/dao/cli.ts",
+    "sync": "tsx src/dao/cli.ts sync",
     "example:pirate": "tsx src/agents-gemini-cli/examples/example.ts",
     "clean:all": "rm -rf dist && npm run clean --workspaces --if-present"
   },

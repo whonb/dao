@@ -3,7 +3,7 @@ import path from "path";
 import { promises as fs } from "fs";
 
 async function ensureSafeLog(worktree: string): Promise<boolean> {
-  const target = path.join(worktree, "src", "dao_guardian", "logging_utils.ts");
+  const target = path.join(worktree, "src", "dao", "logging_utils.ts");
   try {
     await fs.access(target);
   } catch {

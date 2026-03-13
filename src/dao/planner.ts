@@ -89,7 +89,7 @@ ${failureModesStr}
 ${fewshotStr}
 
 **要求**: next_objective 必须包含明确的文件路径和改动类型，例如:
-- "在 src/dao_guardian/evolve.ts 中添加心跳检测逻辑"
+- "在 src/dao/evolve.ts 中添加心跳检测逻辑"
 - "修改 src/common/fs.ts 的错误处理函数"
 
 请直接输出 JSON，包含 thought, next_objective, next_actions。`;
@@ -225,7 +225,7 @@ ${fewshotStr}
       return promoted.map((line: string) => {
         const obj = JSON.parse(line);
         // 从 reason 字段解析改动信息，格式如:
-        // "晋升成功: Updating 8ce5fd9..927b1e0\nFast-forward\n src/dao_guardian/logging_utils.ts | 60 +++++++++++++++++...\n"
+        // "晋升成功: Updating 8ce5fd9..927b1e0\nFast-forward\n src/dao/logging_utils.ts | 60 +++++++++++++++++...\n"
         const changes = this._parseChangePattern(obj.reason || "");
         return {
           cycle: obj.cycle,
@@ -242,7 +242,7 @@ ${fewshotStr}
    */
   private _parseChangePattern(reason: string): { file: string; additions: number; deletions: number }[] {
     const changes: { file: string; additions: number; deletions: number }[] = [];
-    // 匹配格式: "src/dao_guardian/logging_utils.ts | 60 ++++++++++++++++++++---"
+    // 匹配格式: "src/dao/logging_utils.ts | 60 ++++++++++++++++++++---"
     // 或: "README.md | 3 +++"
     const regex = /^\s*([^|]+?)\s*\|\s*(\d+)\s+([^\n]*)$/gm;
     let match;

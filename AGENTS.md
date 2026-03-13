@@ -6,11 +6,14 @@
 3. **可观测性优先**：优先增加日志、心跳或其他可观测手段。
 4. **护栏守则**：严格遵守 `config/evolution.json` 中的 `protected_paths` 和 `allowed_edit_roots` 约束。
 
+## 项目目录文件
+- **tsconfig** : `tsconfig.json`服务于ide,  `tsconfig.build.json`服务于构建 `tsconfig.base.json`服务于基础配置
+
 ## 准确性规范 (Strict Source)
 1. **重新加载**: 每次工作前重新加载上下文文件.
 2. **查阅优先**: 每次工作前,先查资料再工作,查阅顺序为: 本项目资料>本地依赖资料`.dao/ref`目录下的依赖git源代码>网上资料, 查阅时对齐版本.
 
-## 强制验证规范 (Strict Validation)
+## ts 强制验证规范 (Strict Validation)
 
 - **无验证，不交付**：所有的代码修改（`.ts`, `.tsx`, `.js`）在完成 `replace` 或 `write_file` 后，**必须**紧跟一 `npm run check`步骤。
 - **错误即反馈**：如果 `check` 失败，必须在回复中展示错误日志并修正代码，直到验证通过。
