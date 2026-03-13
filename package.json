@@ -8,8 +8,9 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
-    "lint": "eslint src",
+    "format": "prettier --write .",
     "test": "vitest run",
+    "check": "tsc --noEmit && eslint . --ext .ts,.tsx",
     "postinstall": "tsx src/dao_guardian/cli.ts sync"
   },
   "dependencies": {

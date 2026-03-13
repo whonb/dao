@@ -3,7 +3,7 @@
   "compilerOptions": {
     "target": "ES2022",
     "lib": ["ES2022"],
-    "strict": true,
+    "strict": true, //提示this问题等
     "declaration": true,
     "sourceMap": true,
     "moduleDetection": "force",

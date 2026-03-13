@@ -1,0 +1,82 @@
+/**
+ * @license
+ * Copyright 2026 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/* eslint-disable no-console */
+
+import { SimpleGeminiAgent } from '../simple-agent.js';
+import { GeminiEventType } from '@google/gemini-cli-core';
+
+async function main() {
+  const abort = new AbortController();
+
+  // 1. 创建 Agent 实例
+  const agent = new SimpleGeminiAgent({
+    instructions:
+      '你是一个专业的终端助手，总是使用海盗的口吻说话。你可以使用工具来查看文件。',
+    // model: 'auto', // 默认即为 auto
+    debug: false,
+  });
+
+  // 捕获 Ctrl+C
+  process.on('SIGINT', async () => {
+    console.log('\n\n🚢 正在紧急下锚（取消并退出）...');
+    abort.abort();
+    await agent.dispose()
+    process.exitCode = 0;
+    setImmediate(() => process.exit(0));
+  });
+
+  console.log('--- ⚓️ 海盗助手正在登船... ---\n');
+
+  try {
+    // 2. 发起询问
+    const stream = agent.ask(
+      '帮我看看当前目录下都有哪些文件？',
+      abort.signal,
+    );
+
+    // 3. 处理流式响应
+    for await (const event of stream) {
+      switch (event.type) {
+        case GeminiEventType.Content:
+          if (typeof event.value === 'string') {
+            process.stdout.write(event.value);
+          }
+          break;
+
+        case GeminiEventType.ToolCallRequest:
+          console.log(`\n\n[🦜 鹦鹉传信：模型想要调用 ${event.value.name}...]`);
+          break;
+
+        case GeminiEventType.ToolCallResponse:
+          console.log(`[✅ 船员汇报：工具执行完毕]`);
+          break;
+
+        case GeminiEventType.Error:
+          console.error('\n❌ 触礁了：', event.value);
+          break;
+
+        default:
+          // 忽略其他事件类型
+          break;
+      }
+    }
+    console.log('\n\n--- 🏁 汇报完毕，船长！ ---');
+  } catch (error: unknown) {
+    if (error instanceof Error && error.name === 'AbortError') {
+      console.log('任务已取消。');
+    } else {
+      console.error('致命错误：', error);
+    }
+  } finally {
+    await agent.dispose();
+  }
+}
+
+main().catch((err) => {
+  console.error('未捕获的错误：', err);
+  process.exit(1);
+});
