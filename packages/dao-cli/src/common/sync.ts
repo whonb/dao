@@ -11,6 +11,57 @@ const GLOBAL_CACHE_DIR = path.join(os.homedir(), ".dao");
 const METADATA_CACHE_PATH = path.join(GLOBAL_CACHE_DIR, "registry-cache.json");
 
 /**
+ * 清理 execSync 输出中的杂讯 (如 Agent pid, shell loading messages)
+ */
+function cleanExecOutput(output: string): string {
+  return output
+    .split("\n")
+    .filter(line => {
+      const l = line.trim();
+      if (!l) return false;
+      if (l.startsWith("Agent pid")) return false;
+      if (l.includes("load ~/.bashrc")) return false;
+      if (l.includes("Output: load")) return false;
+      return true;
+    })
+    .join("\n")
+    .trim();
+}
+
+/**
+ * 获取所有工作区包名
+ */
+function getWorkspacePackages(): Set<string> {
+  const workspacePackages = new Set<string>();
+  try {
+    const rootPkgPath = path.resolve(process.cwd(), "package.json");
+    if (fs.existsSync(rootPkgPath)) {
+      const rootPkg = JSON.parse(fs.readFileSync(rootPkgPath, "utf-8"));
+      const workspaces = rootPkg.workspaces;
+      if (Array.isArray(workspaces)) {
+        for (const pattern of workspaces) {
+          const baseDir = pattern.replace(/\/\*$/, "");
+          const fullBaseDir = path.resolve(process.cwd(), baseDir);
+          if (fs.existsSync(fullBaseDir)) {
+            const dirs = fs.readdirSync(fullBaseDir);
+            for (const dir of dirs) {
+              const pkgPath = path.join(fullBaseDir, dir, "package.json");
+              if (fs.existsSync(pkgPath)) {
+                try {
+                  const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf-8"));
+                  if (pkg.name) workspacePackages.add(pkg.name);
+                } catch ( _e) { /* ignore */ }
+              }
+            }
+          }
+        }
+      }
+    }
+  } catch ( _e) { /* ignore */ }
+  return workspacePackages;
+}
+
+/**
  * 元数据项
  */
 interface MetadataItem {
@@ -81,7 +132,8 @@ function parseRepoUrl(url: string): RepoInfo | null {
 function getBestTag(repoUrl: string, version: string): string | null {
   try {
     const cloneUrl = repoUrl.startsWith("http") ? repoUrl : `https://${repoUrl}`;
-    const tagsOutput = execSync(`git ls-remote --tags ${cloneUrl}`, { stdio: "pipe" }).toString();
+    log.info(`[Git] 正在获取远端 Tag 信息: ${cloneUrl}`);
+    const tagsOutput = cleanExecOutput(execSync(`git ls-remote --tags ${cloneUrl}`, { stdio: "pipe" }).toString());
     const tags = tagsOutput
       .split("\n")
       .filter(line => line.includes("refs/tags/"))
@@ -117,11 +169,12 @@ async function processPackage(
   version: string,
   globalRefBase: string, 
   projectRefBase: string,
-  config?: ProjectConfig
+  config?: ProjectConfig,
+  workspacePackages?: Set<string>
 ): Promise<SyncResult | null> {
   try {
     // 跳过本地 workspace 依赖
-    if (version.startsWith("workspace:")) {
+    if (version.startsWith("workspace:") || workspacePackages?.has(name)) {
       log.debug(`[${name}] 跳过本地 Workspace 依赖`);
       return null;
     }
@@ -140,11 +193,17 @@ async function processPackage(
         subDir = metadataCache[name].subDir;
         log.debug(`[${name}] 使用缓存的元数据: ${repoUrl}`);
     } else {
-        repoUrl = execSync(`npm view ${name} repository.url`, { stdio: "pipe" }).toString().trim();
+        log.info(`[${name}] 正在从 npm registry 获取元数据...`);
         try {
-            subDir = execSync(`npm view ${name} repository.directory`, { stdio: "pipe" }).toString().trim();
-        } catch( _e) {
-            // 忽略 directory 不存在的错误
+          repoUrl = cleanExecOutput(execSync(`npm view ${name} repository.url`, { stdio: "pipe" }).toString());
+          try {
+              subDir = cleanExecOutput(execSync(`npm view ${name} repository.directory`, { stdio: "pipe" }).toString());
+          } catch( _e) {
+              // 忽略 directory 不存在的错误
+          }
+        } catch (err: any) {
+          log.warn(`[${name}] 无法获取 npm 元数据, 请检查网络或是否为私有包: ${err.message}`);
+          return null;
         }
         metadataCache[name] = { repoUrl, subDir, lastVersion: version };
         log.debug(`[${name}] 从远程获取元数据: ${repoUrl}`);
@@ -224,6 +283,59 @@ async function processPackage(
 }
 
 /**
+ * 更新 AGENTS.md 中的依赖列表
+ */
+function updateAgentsMdWithDeps(deps: Record<string, string>): void {
+  const agentsMdPath = path.resolve(process.cwd(), "AGENTS.md");
+  if (!fs.existsSync(agentsMdPath)) return;
+
+  const log = logger.withTag("Agents");
+  try {
+    let content = fs.readFileSync(agentsMdPath, "utf-8");
+    const sectionHeader = "## 直接依赖 (Dependencies)";
+    const startTag = "<!-- DAO_DEPS_START -->";
+    const endTag = "<!-- DAO_DEPS_END -->";
+    const warning = "<!-- 自动生成，请勿手动修改 (Auto-generated, do not edit manually) -->";
+    
+    const depList = Object.entries(deps)
+      .map(([name, version]) => `- ${name}: ${version}`)
+      .join("\n");
+    
+    const newChunk = `${startTag}\n${warning}\n${depList}\n${endTag}`;
+
+    const startIndex = content.indexOf(startTag);
+    const endIndex = content.indexOf(endTag);
+
+    if (startIndex !== -1 && endIndex !== -1 && endIndex > startIndex) {
+      // 模式 A: 已存在标签，直接替换中间内容
+      content = content.slice(0, startIndex) + newChunk + content.slice(endIndex + endTag.length);
+    } else {
+      // 模式 B: 尚无标签，寻找标题
+      const lines = content.split("\n");
+      const sectionIndex = lines.findIndex(line => line.trim() === sectionHeader);
+
+      if (sectionIndex !== -1) {
+        // 找到标题，在标题下方插入内容（保留标题后的空行逻辑）
+        let nextContentIndex = sectionIndex + 1;
+        // 如果标题后紧跟了空行，跳过它
+        if (lines[nextContentIndex]?.trim() === "") nextContentIndex++;
+        
+        lines.splice(nextContentIndex, 0, "\n" + newChunk + "\n");
+        content = lines.join("\n");
+      } else {
+        // 没找到标题，追加到末尾
+        content = content.trim() + "\n\n" + sectionHeader + "\n\n" + newChunk + "\n";
+      }
+    }
+
+    fs.writeFileSync(agentsMdPath, content.trim() + "\n");
+    log.info("AGENTS.md 依赖列表已更新 (使用结构化锚点)");
+  } catch (err) {
+    log.warn(`更新 AGENTS.md 失败: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
+/**
  * 根 Package 对象接口
  */
 interface PackageJson {
@@ -254,17 +366,31 @@ export async function syncDependencies(): Promise<void> {
   }
 
   const pkg: PackageJson = JSON.parse(fs.readFileSync(pkgPath, "utf-8"));
+  
+  // 更新 AGENTS.md 中的依赖列表
+  const displayDeps = { ...(pkg.dependencies || {}) };
+  // 如果是根目录（dependencies 为空），则把 devDependencies 也放进去，方便 AI 了解环境
+  if (Object.keys(displayDeps).length === 0 && (pkg as any).devDependencies) {
+    Object.assign(displayDeps, (pkg as any).devDependencies);
+  }
+  updateAgentsMdWithDeps(displayDeps);
+
   const allDeps = { ...(pkg.dependencies || {}), ...((pkg as any).devDependencies || {}) };
   const globalRefBase = path.join(GLOBAL_CACHE_DIR, "ref");
   const projectRefBase = path.resolve(process.cwd(), ".dao", "ref");
+  
+  const workspacePackages = getWorkspacePackages();
 
   log.info(`开始同步 ${Object.keys(allDeps).length} 个依赖...`);
   const startTime = Date.now();
   const syncResults: Record<string, SyncResult> = {};
+  const entries = Object.entries(allDeps);
 
   // 顺序处理每个包
-  for (const [name, version] of Object.entries(allDeps)) {
-    const result = await processPackage(name, version as string, globalRefBase, projectRefBase, projectConfig);
+  for (let i = 0; i < entries.length; i++) {
+    const [name, version] = entries[i];
+    log.info(`[${i + 1}/${entries.length}] 正在处理 ${name}@${version}...`);
+    const result = await processPackage(name, version as string, globalRefBase, projectRefBase, projectConfig, workspacePackages);
     if (result) syncResults[name] = result;
   }
 

@@ -31,3 +31,23 @@
 3. **错误即反馈**：如果校验失败，必须在回复中展示完整错误日志并原地修正，直到验证通过。
 4. **禁止 `as any`**: 除非获得用户明确授权，否则禁止使用 `as any` 或 `@ts-ignore` 规避类型报错。
 5. **运行期验证**: 对于工具调度等复杂逻辑，除了类型检查外，还必须编写或运行 `*_example.ts` 或现有测试来确认。
+
+## 直接依赖 (Dependencies)
+
+<!-- DAO_DEPS_START -->
+<!-- 自动生成，请勿手动修改 (Auto-generated, do not edit manually) -->
+- @eslint/js: ^9.21.0
+- @tsconfig/recommended: ^1.0.13
+- @types/node: ^22.0.0
+- @types/ws: ^8.18.1
+- eslint: ^9.21.0
+- pino-pretty: ^13.1.3
+- tsup: ^8.4.0
+- tsx: ^4.7.0
+- typescript: ^5.6.3
+- typescript-eslint: ^8.25.0
+- vitest: ^3.0.0
+- @whonb/devtools: *
+- @whonb/agents-gemini-cli: *
+- @whonb/dao-cli: *
+<!-- DAO_DEPS_END -->
