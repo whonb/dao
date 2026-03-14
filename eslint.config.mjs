@@ -1,13 +1,13 @@
 import js from "@eslint/js";
 import globals from "globals";
-import tseslint from "typescript-eslint";
+import tslint from "typescript-eslint";
 
-export default tseslint.config(
+export default tslint.config(
   {
     ignores: ["dist/**", "coverage/**", "node_modules/**", ".dao/**", ".worktrees/**", "packages/**/dist/**"],
   },
   js.configs.recommended,
-  ...tseslint.configs.recommended,
+  tslint.configs.recommended,
   {
     files: ["**/*.ts"],
     languageOptions: {
@@ -18,6 +18,17 @@ export default tseslint.config(
     rules: {
       "@typescript-eslint/no-explicit-any": "warn",
       "no-empty": "warn",
+      "no-restricted-imports": [
+        "error",
+        {
+          "patterns": [
+            {
+              "group": ["**/.dao/ref/**"],
+              "message": "禁止直接从 .dao/ref 导入。请使用标准包名并在 tsconfig.json 中配置 paths 映射。",
+            },
+          ],
+        },
+      ],
       "@typescript-eslint/no-unused-vars": [
         "warn",
         {
