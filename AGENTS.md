@@ -36,11 +36,11 @@
 
 <!-- DAO_DEPS_START -->
 <!-- 自动生成，请勿手动修改 (Auto-generated, do not edit manually) -->
-- @eslint/js: ^9.21.0
-- @types/node: ^22.0.0
-- eslint: ^9.21.0
-- tsx: ^4.7.0
-- typescript: ^5.6.3
-- typescript-eslint: ^8.25.0
-- vitest: ^3.0.0
+- @eslint/js: ^9.21.0, source: ./.dao/ref/github.com/eslint/eslint/v9.21.0/packages/js
+- @types/node: ^22.0.0, source: ./.dao/ref/github.com/DefinitelyTyped/DefinitelyTyped/22.0.0/types/node
+- eslint: ^9.21.0, source: ./.dao/ref/github.com/eslint/eslint/v9.21.0
+- tsx: ^4.7.0, source: ./.dao/ref/github.com/privatenumber/tsx/v4.7.0
+- typescript: ^5.6.3, source: ./.dao/ref/github.com/microsoft/TypeScript/v5.6.3
+- typescript-eslint: ^8.25.0, source: ./.dao/ref/github.com/typescript-eslint/typescript-eslint/v8.25.0/packages/typescript-eslint
+- vitest: ^3.0.0, source: ./.dao/ref/github.com/vitest-dev/vitest/v3.0.0/packages/vitest
 <!-- DAO_DEPS_END -->

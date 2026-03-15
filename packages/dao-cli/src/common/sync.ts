@@ -285,7 +285,7 @@ async function processPackage(
 /**
  * 更新 AGENTS.md 中的依赖列表
  */
-function updateAgentsMdWithDeps(deps: Record<string, string>): void {
+function updateAgentsMdWithDeps(deps: Record<string, string>, syncResults: Record<string, SyncResult> = {}): void {
   const agentsMdPath = path.resolve(process.cwd(), "AGENTS.md");
   if (!fs.existsSync(agentsMdPath)) return;
 
@@ -298,7 +298,13 @@ function updateAgentsMdWithDeps(deps: Record<string, string>): void {
     const warning = "<!-- 自动生成，请勿手动修改 (Auto-generated, do not edit manually) -->";
     
     const depList = Object.entries(deps)
-      .map(([name, version]) => `- ${name}: ${version}`)
+      .map(([name, version]) => {
+        const res = syncResults[name];
+        if (res) {
+          return `- ${name}: ${version}, source: ${res.relativePath}`;
+        }
+        return `- ${name}: ${version}`;
+      })
       .join("\n");
     
     const newChunk = `${startTag}\n${warning}\n${depList}\n${endTag}`;
@@ -367,14 +373,6 @@ export async function syncDependencies(): Promise<void> {
 
   const pkg: PackageJson = JSON.parse(fs.readFileSync(pkgPath, "utf-8"));
   
-  // 更新 AGENTS.md 中的依赖列表
-  const displayDeps = { ...(pkg.dependencies || {}) };
-  // 如果是根目录（dependencies 为空），则把 devDependencies 也放进去，方便 AI 了解环境
-  if (Object.keys(displayDeps).length === 0 && (pkg as any).devDependencies) {
-    Object.assign(displayDeps, (pkg as any).devDependencies);
-  }
-  updateAgentsMdWithDeps(displayDeps);
-
   const allDeps = { ...(pkg.dependencies || {}), ...((pkg as any).devDependencies || {}) };
   const globalRefBase = path.join(GLOBAL_CACHE_DIR, "ref");
   const projectRefBase = path.resolve(process.cwd(), ".dao", "ref");
@@ -395,6 +393,14 @@ export async function syncDependencies(): Promise<void> {
   }
 
   saveMetadataCache();
+
+  // 更新 AGENTS.md 中的依赖列表
+  const displayDeps = { ...(pkg.dependencies || {}) };
+  // 如果是根目录（dependencies 为空），则把 devDependencies 也放进去，方便 AI 了解环境
+  if (Object.keys(displayDeps).length === 0 && (pkg as any).devDependencies) {
+    Object.assign(displayDeps, (pkg as any).devDependencies);
+  }
+  updateAgentsMdWithDeps(displayDeps, syncResults);
 
   // 更新 tsconfig.ide.json
   if (fs.existsSync(tsConfigPath)) {
