@@ -29,14 +29,36 @@ function cleanExecOutput(output: string): string {
 }
 
 /**
- * 获取所有工作区包名
+ * 工作区包信息
  */
-function getWorkspacePackages(): Set<string> {
-  const workspacePackages = new Set<string>();
+interface WorkspaceInfo {
+  name: string;
+  version: string;
+  path: string;
+  relativePath: string;
+  dependencies: Record<string, string>;
+  devDependencies: Record<string, string>;
+}
+
+/**
+ * 获取所有工作区包信息
+ */
+function getWorkspacePackages(): Map<string, WorkspaceInfo> {
+  const workspaceMap = new Map<string, WorkspaceInfo>();
   try {
     const rootPkgPath = path.resolve(process.cwd(), "package.json");
     if (fs.existsSync(rootPkgPath)) {
       const rootPkg = JSON.parse(fs.readFileSync(rootPkgPath, "utf-8"));
+      // 添加根包
+      workspaceMap.set(rootPkg.name || "root", {
+        name: rootPkg.name || "root",
+        version: rootPkg.version || "0.0.0",
+        path: process.cwd(),
+        relativePath: ".",
+        dependencies: rootPkg.dependencies || {},
+        devDependencies: rootPkg.devDependencies || {},
+      });
+
       const workspaces = rootPkg.workspaces;
       if (Array.isArray(workspaces)) {
         for (const pattern of workspaces) {
@@ -45,11 +67,21 @@ function getWorkspacePackages(): Set<string> {
           if (fs.existsSync(fullBaseDir)) {
             const dirs = fs.readdirSync(fullBaseDir);
             for (const dir of dirs) {
-              const pkgPath = path.join(fullBaseDir, dir, "package.json");
+              const pkgDir = path.join(fullBaseDir, dir);
+              const pkgPath = path.join(pkgDir, "package.json");
               if (fs.existsSync(pkgPath)) {
                 try {
                   const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf-8"));
-                  if (pkg.name) workspacePackages.add(pkg.name);
+                  if (pkg.name) {
+                    workspaceMap.set(pkg.name, {
+                      name: pkg.name,
+                      version: pkg.version || "0.0.0",
+                      path: pkgDir,
+                      relativePath: path.relative(process.cwd(), pkgDir),
+                      dependencies: pkg.dependencies || {},
+                      devDependencies: pkg.devDependencies || {},
+                    });
+                  }
                 } catch ( _e) { /* ignore */ }
               }
             }
@@ -58,7 +90,7 @@ function getWorkspacePackages(): Set<string> {
       }
     }
   } catch ( _e) { /* ignore */ }
-  return workspacePackages;
+  return workspaceMap;
 }
 
 /**
@@ -170,7 +202,7 @@ async function processPackage(
   globalRefBase: string, 
   projectRefBase: string,
   config?: ProjectConfig,
-  workspacePackages?: Set<string>
+  workspacePackages?: Map<string, WorkspaceInfo>
 ): Promise<SyncResult | null> {
   try {
     // 跳过本地 workspace 依赖
@@ -301,7 +333,8 @@ function updateAgentsMdWithDeps(deps: Record<string, string>, syncResults: Recor
       .map(([name, version]) => {
         const res = syncResults[name];
         if (res) {
-          return `- ${name}: ${version}, source: ${res.relativePath}`;
+          const cleanPath = res.relativePath.startsWith("./") ? res.relativePath.slice(2) : res.relativePath;
+          return `- ${name}: ${version} , source: ${cleanPath}`;
         }
         return `- ${name}: ${version}`;
       })

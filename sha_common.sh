@@ -119,6 +119,8 @@ run() {
 
 # run pwd
 # shellcheck source=../vendor/sha.bash
-run git submodule update
+if [ ! -d "$ROOT_DIR/vendor/sha" ] || [ -z "$(ls -A "$ROOT_DIR/vendor/sha" 2>/dev/null)" ]; then
+  run git submodule update --init --recursive
+fi
 source "$ROOT_DIR/vendor/sha/sha.bash"
 shopt -s expand_aliases  # bash默认不开启alias 扩展
