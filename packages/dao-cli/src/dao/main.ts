@@ -32,8 +32,25 @@ export class DaoGuardian {
     this.configDir = path.join(root, "config");
   }
 
+  _validateConfig(config: any): Config {
+    const defaultTopics = ["石油价格", "道琼斯指数", "中美战争概率"];
+    return {
+      topics: Array.isArray(config?.topics) ? config.topics : defaultTopics,
+      degrade_threshold: typeof config?.degrade_threshold === "number" ? config.degrade_threshold : 0.8,
+      evolve_every: typeof config?.evolve_every === "number" ? config.evolve_every : 5,
+      keep_snapshots: typeof config?.keep_snapshots === "number" ? config.keep_snapshots : 10,
+    };
+  }
+
   async _loadConfig(): Promise<Config> {
-    return await readJson<Config>(path.join(this.configDir, "goals.json"));
+    const configPath = path.join(this.configDir, "goals.json");
+    try {
+      const rawConfig = await readJson<any>(configPath);
+      return this._validateConfig(rawConfig);
+    } catch (err) {
+      this.logger.warn({ configPath }, "Failed to load goals.json, using default config");
+      return this._validateConfig({});
+    }
   }
 
   async bootstrap(): Promise<void> {
