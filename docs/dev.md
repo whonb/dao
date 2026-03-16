@@ -20,11 +20,11 @@ draft: false
    ./sha.sh worktree add dao-feature-<name>
    # 例：./sha.sh worktree add dao-feature-auth
    ```
-   这将在 `.worktrees/dao-feature-<name>` 创建独立的开发环境
+   这将在 `.worktree/dao-feature-<name>` 创建独立的开发环境
 
 2. **进入 worktree 开发**：
    ```bash
-   cd .worktrees/dao-feature-<name>
+   cd .worktree/dao-feature-<name>
    # 进行开发、测试、提交
    ```
 

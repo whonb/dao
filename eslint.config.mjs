@@ -4,7 +4,7 @@ import tslint from "typescript-eslint";
 
 export default tslint.config(
   {
-    ignores: ["dist/**", "coverage/**", "node_modules/**", ".dao/**", ".worktrees/**", "packages/**/dist/**"],
+    ignores: ["dist/**", "coverage/**", "node_modules/**", ".dao/**", ".worktree/**", "packages/**/dist/**"],
   },
   js.configs.recommended,
   tslint.configs.recommended,

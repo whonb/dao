@@ -5,9 +5,9 @@
       <excludeFolder url="file://$MODULE_DIR$/.dao/ref" />
       <excludeFolder url="file://$MODULE_DIR$/packages/dao-tui/.dao/ref" />
       <excludeFolder url="file://$MODULE_DIR$/.idea/inspectionProfiles" />
-      <excludeFolder url="file://$MODULE_DIR$/.worktrees" />
       <excludeFolder url="file://$MODULE_DIR$/logs" />
       <excludeFolder url="file://$MODULE_DIR$/state" />
+      <excludeFolder url="file://$MODULE_DIR$/.worktree" />
     </content>
     <orderEntry type="inheritedJdk" />
     <orderEntry type="sourceFolder" forTests="false" />

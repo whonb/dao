@@ -25,7 +25,7 @@ source "$ROOT_DIR/sha_common.sh"
 
 workspaces=(packages/*/)
 submodules=(vendor/*/)
-worktrees_dir=".worktrees"
+worktree_dir=".worktree"
 
 ####################################################################################
 # worktree 开发流程 (方案 B: 脚本 + AGENTS.md 双重保障)
@@ -46,7 +46,7 @@ worktree() {
       return 1
     fi
 
-    local worktree_path="$worktrees_dir/$name"
+    local worktree_path="$worktree_dir/$name"
 
     # 检查是否已存在
     if [[ -d "$worktree_path" ]]; then
@@ -77,7 +77,7 @@ worktree() {
       return 1
     fi
 
-    local worktree_path="$worktrees_dir/$name"
+    local worktree_path="$worktree_dir/$name"
 
     if [[ ! -d "$worktree_path" ]]; then
       echo "${c_error}Worktree 不存在：$worktree_path${c_reset}"
@@ -99,7 +99,7 @@ worktree() {
       return 1
     fi
 
-    local worktree_path="$worktrees_dir/$name"
+    local worktree_path="$worktree_dir/$name"
 
     if [[ ! -d "$worktree_path" ]]; then
       echo "${c_error}Worktree 不存在：$worktree_path${c_reset}" >&2
@@ -141,7 +141,7 @@ ${c_primary}Worktree 开发流程管理${c_reset}
 用法：./sha.sh worktree <command> [args]
 
 命令:
-  ${c_secondary}add <name>${c_reset}     创建新的 worktree 分支到 $worktrees_dir/<name>
+  ${c_secondary}add <name>${c_reset}     创建新的 worktree 分支到 $worktree_dir/<name>
   ${c_secondary}list${c_reset}           查看所有 worktree 状态
   ${c_secondary}merge <name>${c_reset}   合并 worktree 到 main 并清理
   ${c_secondary}remove <name>${c_reset}  清理已合并的 worktree (不合并)
@@ -149,13 +149,13 @@ ${c_primary}Worktree 开发流程管理${c_reset}
 
 示例:
   ./sha.sh worktree add dao-feature-auth     # 创建新特性分支
-  cd .worktrees/dao-feature-auth             # 进入开发
+  cd .worktree/dao-feature-auth             # 进入开发
   # ... 开发、测试、提交 ...
   ./sha.sh worktree merge dao-feature-auth   # 合并回 main
 
 流程说明:
   1. 主分支 (main) 保持稳定，不直接修改
-  2. 新功能在 .worktrees/dao-xxxx 独立开发
+  2. 新功能在 .worktree/dao-xxxx 独立开发
   3. 开发完成后通过 worktree merge 合并回 main
   4. 合并前自动运行测试验证
 

@@ -16,7 +16,7 @@ tmp*
 # Logs
 logs/
 
-.worktrees/
+.worktree/
 state/
 data/
 

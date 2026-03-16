@@ -183,7 +183,7 @@ export class DaoEvolver {
   configDir: string;
   stateDir: string;
   logsDir: string;
-  worktreesDir: string;
+  worktreeDir: string;
   agentsPath: string;
   config!: EvolutionConfig;
   globalObjective!: string;
@@ -199,7 +199,7 @@ export class DaoEvolver {
     this.configDir = path.join(root, "config");
     this.stateDir = path.join(root, "state");
     this.logsDir = path.join(root, "logs");
-    this.worktreesDir = path.join(root, ".worktrees");
+    this.worktreeDir = path.join(root, ".worktree");
     this.agentsPath = path.join(root, "AGENTS.md");
     this.planner = new DaoPlanner(root);
   }
@@ -257,7 +257,7 @@ export class DaoEvolver {
     this._logIO("初始化目录结构...");
     await ensureDir(this.stateDir);
     await ensureDir(this.logsDir);
-    await ensureDir(this.worktreesDir);
+    await ensureDir(this.worktreeDir);
 
     this.config = await this._loadConfig();
     const [globalObjective, agentsExcerpt] = await this._loadAgentsContext();
@@ -387,7 +387,7 @@ export class DaoEvolver {
 
         const tool = tools[(cycle - 1) % tools.length];
         const branch = `auto/evo-${new Date().toISOString().replace(/[:.]/g, "-")}-${cycle}`;
-        const worktree = path.join(this.worktreesDir, "dao-1");
+        const worktree = path.join(this.worktreeDir, "dao-1");
 
         span.setAttributes({ "tool.name": tool.name, "git.branch": branch });
         await this._trace(cycle, "PLAN", "已选择工具与目标", {
