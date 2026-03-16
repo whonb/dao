@@ -58,20 +58,40 @@
 
 ### workflow
 
-- [Trigger.dev](https://trigger.dev)
-  - ✅ 基于云事件的无服务器工作流引擎，支持 TypeScript/JavaScript/Python 等语言，有 UI 控制台。
-- [temporalio/temporal](https://github.com/temporalio/temporal)
-  - ✅ Go/Java/TS/Python/.NET 需部署 用法类似Workflow DevKit
-- [Workflow DevKit ](https://useworkflow.dev/)
-  - CLI + UI + OTel 类库化 vercel 的 nextjs绑定
-- https://github.com/PrefectHQ/prefect
-  - ✅ python
+- 命令型风格
+  - 支持cli嵌入式风格lib引用
+    - crewai.flow.flow 
+      - 支持嵌入式风格cli程序
+      - python @anno 风格
+    - https://github.com/openworkflowdev/openworkflow
+      -  OpenWorkflow Worker Separate Process
+  - 依赖外部平台/服务，无法独立cli嵌入运行
+    - [vercel Workflow ](https://useworkflow.dev/)
+      - CLI + UI + OTel 类库化 vercel 的 nextjs绑定
+    - [pydantic_graph](https://ai.pydantic.dev/api/pydantic_graph/graph/)
+      - python 这个设计不错，命令式执行(类似applab思路)，不是先定义再执行
+    - [Trigger.dev](https://trigger.dev)
+      - TypeScript/JavaScript/Python, 基于云事件的无服务器工作流引擎，有 UI 控制台
+      - Linux 的 CRIU (Checkpoint/Restore In Userspace) ，存储快照比较大（比如 200MB），冷启动慢
+    - https://www.inngest.com/docs/getting-started/nodejs-quick-start
+    - [temporalio/temporal](https://github.com/temporalio/temporal)
+      - Go/Java/TS/Python/.NET 需部署 用法类似Workflow DevKit
+    - https://github.com/PrefectHQ/prefect
+      - python
+  
+- 声明型风格
+  - LangGraph
+    - python/js
+  - autogen.agentchat.group
+    - python 
+  - github action
+    - yaml CICD
+    - [probot/probot](https://github.com/probot/probot) 
+      - typescript , github action的代码级封装
+      - app.on("issues.opened", async (context) => {})
 
-github action
-
-- [probot/probot](https://github.com/probot/probot) 
-  - app.on("issues.opened", async (context) => {})
-  - 非常适合lib使用
+试验案例：
+[trigger: translate-and-refine](https://trigger.dev/docs/guides/ai-agents/translate-and-refine) 这个案例再加个自动条件审核就足够测试各框架的api逻辑了
 
 ## 类似想法
 
