@@ -18,6 +18,9 @@
 
 ### 图格式mermaid
 
+flowchart vs stateDiagram-v2
+
+
 ```mermaid
 stateDiagram-v2
     [*] --> Planner
@@ -108,6 +111,7 @@ stateDiagram-v2
   
 - 声明型风格
   - LangGraph
+    - [quickstart](https://docs.langchain.com/oss/python/langgraph/quickstart)
     - python/js
   - autogen.agentchat.group
     - python 
