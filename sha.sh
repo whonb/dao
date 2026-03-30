@@ -339,6 +339,7 @@ issue() {
     fi
 
     run git worktree add -b "$branch_name" "$worktree_path" "$main_branch"
+    run git push -u origin "$branch_name"
 
     echo
     echo "${c_success}success: Created worktree at: $worktree_path${c_reset}"
