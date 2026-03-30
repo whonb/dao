@@ -293,15 +293,15 @@ issue() {
     echo "${c_success}success: Created issue #$issue_num: $issue_url${c_reset}"
     echo "${c_success}success: Added to project $GH_PROJECT_NUM (Status: Backlog)${c_reset}"
     echo
-    echo "To start working:"
-    echo "  ./sha.sh work start $issue_num"
+    echo "To start dev:"
+    echo "  ./sha.sh issue dev $issue_num"
   }
 
   # 开始任务 - 移动到 In Progress 并创建 worktree
-  # Usage: ./sha.sh work start <issue-number> [branch-name]
-  start() {
+  # Usage: ./sha.sh work dev <issue-number> [branch-name]
+  dev() {
     if [ $# -lt 1 ] || [ $# -gt 2 ]; then
-      echo "${c_error}Usage: ./sha.sh work start <issue-number> [branch-name]${c_reset}"
+      echo "${c_error}Usage: ./sha.sh issue dev <issue-number> [branch-name]${c_reset}"
       exit 1
     fi
     local issue_num="$1"
@@ -339,12 +339,13 @@ issue() {
     fi
 
     run git worktree add -b "$branch_name" "$worktree_path" "$main_branch"
+    run git push -u origin "$branch_name"
 
     echo
     echo "${c_success}success: Created worktree at: $worktree_path${c_reset}"
     echo "${c_success}success: Branch: $branch_name${c_reset}"
     echo
-    echo "To start working:"
+    echo "To start dev:"
     echo "  cd $worktree_path and dev"
   }
 
